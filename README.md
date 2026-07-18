@@ -87,10 +87,54 @@ Add one line before `</body>`:
 
 ## API
 
-- `POST /api/chat` — `{ message: string, history?: {role, content}[] }` → streamed plain-text response
+- `POST /api/chat` — `{ message: string, history?: {role, content}[], sessionId?: string }` → streamed plain-text response.
+  Pass `sessionId` to get persistence and WhatsApp handoff; omit it for a stateless one-off call.
+- `POST /api/chat/handoff` — `{ sessionId: string }` → flips that session into WhatsApp handoff mode and
+  notifies the owner
+- `GET /api/chat/stream/:sessionId` — Server-Sent Events stream; pushes the owner's WhatsApp replies
+  back to the widget live
+- `POST /api/webhooks/whatsapp` / `GET /api/webhooks/whatsapp` — Meta Cloud API webhook (inbound
+  messages / verification handshake)
 - `POST /api/ingest/document` — `{ title: string, content: string }` → `{ documentId, chunkCount }`
 - `POST /api/ingest/crawl` — `{ url: string, maxPages?: number }` → starts a background crawl
 - `GET /health` — liveness check
+
+## WhatsApp handoff
+
+The widget has a "Talk to a person" button. Clicking it marks that visitor's conversation as
+`handoff` and sends the owner a WhatsApp message with the recent transcript. From then on:
+
+- The visitor's further messages are relayed straight to the owner's WhatsApp as plain text (the bot
+  stops answering for that conversation).
+- The owner's WhatsApp replies are pushed live into the widget via Server-Sent Events — the visitor
+  never leaves the website.
+
+**Setup (Meta Cloud API):**
+
+1. In the Meta Business dashboard, note your app's permanent access token and phone number ID —
+   set `WHATSAPP_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID`.
+2. Set `OWNER_WHATSAPP_NUMBER` to the phone number (E.164, e.g. `233241234567`) that should receive
+   handoff notifications and reply on behalf of the business.
+3. Pick a `WHATSAPP_VERIFY_TOKEN` (any string you choose) and register the webhook in the Meta App
+   dashboard as `https://your-server.example.com/api/webhooks/whatsapp`, subscribed to the
+   `messages` field.
+
+**Two things Meta's API requires that this doesn't paper over:**
+
+- **24-hour window.** Free-form text to a WhatsApp number only works within 24h of that number's
+  last message *to* your business number. Have the owner send your business WhatsApp number a "hi"
+  once to open the window (and again if 24h passes with no messages). For fully hands-off operation
+  across that gap, set `WHATSAPP_TEMPLATE_NAME` to a pre-approved message template — it's used
+  automatically as a fallback when a free-form send is rejected.
+- **Routing replies to the right visitor.** Multiple visitors can be in handoff mode at once, all
+  messaging the same owner number. When the owner **swipe-replies** to a specific notification,
+  the reply is routed to that exact visitor (via WhatsApp's `context.id` on the reply). A plain,
+  non-quoted reply falls back to "most recently active handoff conversation" — fine with one
+  conversation at a time, ambiguous with several. Tell the owner to swipe-reply when more than one
+  visitor is waiting.
+
+This also assumes a single server instance — the live SSE relay is in-process. Running multiple
+instances behind a load balancer would need a shared pub/sub (e.g. Redis) instead.
 
 ## Notes / next steps
 
