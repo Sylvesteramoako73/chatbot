@@ -15,7 +15,8 @@ import {
 import { subscribeToSession } from "./events";
 
 const app = express();
-app.use(cors({ origin: process.env.ALLOWED_ORIGIN ?? "*" }));
+const allowedOrigins = (process.env.ALLOWED_ORIGIN ?? "*").split(",").map((o) => o.trim());
+app.use(cors({ origin: allowedOrigins.length > 1 ? allowedOrigins : allowedOrigins[0] }));
 app.use(express.json({ limit: "2mb" }));
 app.use("/widget", express.static(path.join(__dirname, "..", "public")));
 
