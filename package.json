@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
+        "start": "node dist/migrate.js && node dist/server.js",
     "ingest:crawl": "tsx src/ingest.ts crawl",
     "ingest:doc": "tsx src/ingest.ts doc"
   },
