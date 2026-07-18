@@ -59,7 +59,7 @@ export async function* streamChatResponse(
         throw new Error(`Gemini request failed: ${response.status} ${errText}`);
   }
 
-  const data = await response.json();
+      const data = (await response.json()) as any;
     const parts = data.candidates?.[0]?.content?.parts ?? [];
     const text = parts.map((p: { text: string }) => p.text).join("");
     yield text;
