@@ -1,53 +1,66 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { retrieveContext } from "./retrieve";
 
-const anthropic = new Anthropic();
-const MODEL = "claude-opus-4-8";
+const MODEL = "gemini-2.0-flash";
 const TOP_K = 5;
 
 export interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
+    role: "user" | "assistant";
+    content: string;
 }
 
 const DEFAULT_PERSONA =
-  "You are a helpful assistant for this company's website. Answer questions using only the provided context. If the answer isn't in the context, say you don't know and suggest contacting support.";
+    "You are a helpful assistant for this company's website. Answer questions using only the provided context. If the answer isn't in the context, say you don't know and suggest contacting support.";
 
 function buildSystemPrompt(contextBlock: string): string {
-  const persona = process.env.COMPANY_SYSTEM_PROMPT ?? DEFAULT_PERSONA;
-  return `${persona}
+    const persona = process.env.COMPANY_SYSTEM_PROMPT ?? DEFAULT_PERSONA;
+    return `${persona}
 
-Use the following context retrieved from the company website to answer the user's question. Cite sources by their bracketed number when relevant (e.g. "[1]"). Do not invent information that isn't in the context — if the context doesn't cover the question, say so.
+    Use the following context retrieved from the company website to answer the user's question. Cite sources by their bracketed number when relevant. Do not invent information that isn't in the context.
 
-<context>
-${contextBlock}
-</context>`;
+    <context>
+    ${contextBlock}
+    </context>`;
 }
 
 export async function* streamChatResponse(
-  userMessage: string,
-  history: ChatMessage[]
-): AsyncGenerator<string> {
-  const chunks = await retrieveContext(userMessage, TOP_K);
+    userMessage: string,
+    history: ChatMessage[]
+  ): AsyncGenerator<string> {
+    const chunks = await retrieveContext(userMessage, TOP_K);
 
   const contextBlock = chunks.length
-    ? chunks.map((c, i) => `[${i + 1}] (source: ${c.sourceUrl ?? c.title})\n${c.content}`).join("\n\n")
-    : "No relevant context was found in the knowledge base.";
+      ? chunks.map((c, i) => `[${i + 1}] (source: ${c.sourceUrl ?? c.title})\n${c.content}`).join("\n\n")
+        : "No relevant context was found in the knowledge base.";
 
-  const stream = anthropic.messages.stream({
-    model: MODEL,
-    max_tokens: 1024,
-    system: buildSystemPrompt(contextBlock),
-    thinking: { type: "adaptive" },
-    messages: [
-      ...history.map((m) => ({ role: m.role, content: m.content })),
-      { role: "user" as const, content: userMessage },
-    ],
+  const systemPrompt = buildSystemPrompt(contextBlock);
+
+  const contents = [
+        ...history.map((m) => ({
+                role: m.role === "assistant" ? "model" : "user",
+                parts: [{ text: m.content }],
+        })),
+    { role: "user", parts: [{ text: userMessage }] },
+      ];
+
+  const apiKey = process.env.GEMINI_API_KEY;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
+
+  const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+                contents,
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+        }),
   });
 
-  for await (const event of stream) {
-    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-      yield event.delta.text;
-    }
+  if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Gemini request failed: ${response.status} ${errText}`);
   }
+
+  const data = await response.json();
+    const parts = data.candidates?.[0]?.content?.parts ?? [];
+    const text = parts.map((p: { text: string }) => p.text).join("");
+    yield text;
 }
