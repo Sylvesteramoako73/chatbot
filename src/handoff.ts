@@ -164,4 +164,3 @@ export async function recordVisitorMessage(conversationId: string, text: string)
 export async function recordBotReply(conversationId: string, text: string): Promise<void> {
     await recordMessage(conversationId, "bot", text);
 }
-}
