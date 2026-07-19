@@ -15,7 +15,11 @@ interface ChunkRow {
   similarity: string;
 }
 
-export async function retrieveContext(query: string, topK = 5): Promise<RetrievedChunk[]> {
+export async function retrieveContext(
+  businessId: string,
+  query: string,
+  topK = 5
+): Promise<RetrievedChunk[]> {
   const [embedding] = await embedTexts([query], "query");
   const vectorLiteral = JSON.stringify(embedding);
 
@@ -23,9 +27,10 @@ export async function retrieveContext(query: string, topK = 5): Promise<Retrieve
     `SELECT c.content, d.source_url, d.title, 1 - (c.embedding <=> $1) AS similarity
      FROM chunks c
      JOIN documents d ON d.id = c.document_id
+     WHERE d.business_id = $3
      ORDER BY c.embedding <=> $1
      LIMIT $2`,
-    [vectorLiteral, topK]
+    [vectorLiteral, topK, businessId]
   );
 
   return result.rows.map((r) => ({

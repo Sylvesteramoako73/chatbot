@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign up — Chatbot Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <div class="auth-shell">
+    <div class="auth-card">
+      <h1>Create your account</h1>
+      <p class="subtitle">Set up your business's chatbot and team inbox.</p>
+
+      <div class="form-error" id="error"></div>
+
+      <form id="signup-form">
+        <div class="field">
+          <label for="business-name">Business name</label>
+          <input id="business-name" name="businessName" type="text" required />
+        </div>
+        <div class="field">
+          <label for="name">Your name</label>
+          <input id="name" name="name" type="text" autocomplete="name" required />
+        </div>
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="email" required />
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="new-password" minlength="8" required />
+        </div>
+        <button class="btn btn-primary btn-block" type="submit" id="submit-btn">Create account</button>
+      </form>
+
+      <p class="auth-footer">Already have an account? <a href="login.html">Log in</a></p>
+    </div>
+  </div>
+
+  <script>
+    var form = document.getElementById("signup-form");
+    var errorEl = document.getElementById("error");
+    var submitBtn = document.getElementById("submit-btn");
+
+    function showError(message) {
+      errorEl.textContent = message;
+      errorEl.classList.add("visible");
+    }
+
+    form.addEventListener("submit", async function (e) {
+      e.preventDefault();
+      errorEl.classList.remove("visible");
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Creating account...";
+
+      try {
+        var res = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            businessName: document.getElementById("business-name").value,
+            name: document.getElementById("name").value,
+            email: document.getElementById("email").value,
+            password: document.getElementById("password").value,
+          }),
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Sign up failed");
+        window.location.href = "settings.html";
+      } catch (err) {
+        showError(err.message);
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Create account";
+      }
+    });
+  </script>
+</body>
+</html>
