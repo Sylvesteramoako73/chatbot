@@ -56,9 +56,12 @@ CREATE TABLE IF NOT EXISTS chunks (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS chunks_embedding_idx
-  ON chunks USING ivfflat (embedding vector_cosine_ops)
-  WITH (lists = 100);
+-- An ivfflat index here clusters ALL tenants' chunks together (lists = 100 was tuned for a
+-- dataset far bigger than what any single tenant has today), so a per-business WHERE filter
+-- combined with the default probes=1 only ever sees a couple of rows from one random cluster,
+-- regardless of how many chunks that business actually has. Dropped in favor of an exact scan,
+-- which stays fast at this data volume and is the only way retrieval is correct today.
+DROP INDEX IF EXISTS chunks_embedding_idx;
 
 CREATE INDEX IF NOT EXISTS chunks_document_id_idx ON chunks (document_id);
 
