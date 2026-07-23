@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Leads — Chatbot Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+      <span id="business-name">Leads</span>
+    </div>
+    <nav>
+      <a href="index.html">Inbox</a>
+      <a href="leads.html" class="active">Leads</a>
+      <a href="analytics.html">Analytics</a>
+      <a href="settings.html">Settings</a>
+      <button class="icon-btn" id="logout-btn">Log out</button>
+    </nav>
+  </header>
+
+  <div class="board" id="board"></div>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="side-panel" id="side-panel" style="display:none">
+    <button class="close-btn" id="close-panel-btn" aria-label="Close">&times;</button>
+    <h2>Lead details</h2>
+    <div class="field">
+      <label for="lead-name">Name</label>
+      <input id="lead-name" type="text" />
+    </div>
+    <div class="field">
+      <label for="lead-phone">Phone</label>
+      <input id="lead-phone" type="text" />
+    </div>
+    <div class="field">
+      <label for="lead-email">Email</label>
+      <input id="lead-email" type="email" />
+    </div>
+    <div class="field">
+      <label for="lead-notes">Notes</label>
+      <textarea id="lead-notes" rows="4"></textarea>
+    </div>
+    <button class="btn btn-primary" id="save-lead-btn">Save</button>
+
+    <h2 style="margin-top:28px">Conversations</h2>
+    <div id="lead-conversations"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    var STAGES = [
+      { key: "new", label: "New" },
+      { key: "contacted", label: "Contacted" },
+      { key: "qualified", label: "Qualified" },
+      { key: "negotiating", label: "Negotiating" },
+      { key: "won", label: "Won" },
+      { key: "lost", label: "Lost" },
+    ];
+
+    var state = { leads: [], selectedLeadId: null };
+
+    function toast(message) {
+      var el = document.getElementById("toast");
+      el.textContent = message;
+      el.classList.add("visible");
+      setTimeout(function () { el.classList.remove("visible"); }, 2500);
+    }
+
+    function timeAgo(iso) {
+      var diffMs = Date.now() - new Date(iso).getTime();
+      var mins = Math.round(diffMs / 60000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return mins + "m ago";
+      var hours = Math.round(mins / 60);
+      if (hours < 24) return hours + "h ago";
+      return Math.round(hours / 24) + "d ago";
+    }
+
+    function escapeHtml(str) {
+      var div = document.createElement("div");
+      div.textContent = str || "";
+      return div.innerHTML;
+    }
+
+    async function api(path, options) {
+      var res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, options));
+      if (res.status === 401) {
+        window.location.href = "login.html";
+        throw new Error("Not authenticated");
+      }
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      return data;
+    }
+
+    async function loadMe() {
+      var data = await api("/api/auth/me");
+      document.getElementById("business-name").textContent = data.business ? data.business.name : "Leads";
+    }
+
+    async function loadBoard() {
+      var data = await api("/api/dashboard/leads");
+      state.leads = data.leads;
+      renderBoard();
+    }
+
+    function renderBoard() {
+      var board = document.getElementById("board");
+      board.innerHTML = "";
+
+      STAGES.forEach(function (stage) {
+        var leadsInStage = state.leads.filter(function (l) { return l.stage === stage.key; });
+
+        var column = document.createElement("div");
+        column.className = "board-column";
+        column.innerHTML =
+          '<div class="board-column-header"><span>' + stage.label + '</span><span class="count">' + leadsInStage.length + "</span></div>" +
+          '<div class="board-column-cards"></div>';
+        var cardsEl = column.querySelector(".board-column-cards");
+
+        leadsInStage.forEach(function (lead) {
+          var card = document.createElement("div");
+          card.className = "lead-card";
+          card.innerHTML =
+            '<div class="name-row">' + escapeHtml(lead.name || "Unnamed lead") + "</div>" +
+            "<time>" + timeAgo(lead.updatedAt) + "</time>" +
+            '<select>' + STAGES.map(function (s) {
+              return '<option value="' + s.key + '"' + (s.key === lead.stage ? " selected" : "") + ">" + s.label + "</option>";
+            }).join("") + "</select>";
+
+          card.querySelector("select").addEventListener("click", function (e) { e.stopPropagation(); });
+          card.querySelector("select").addEventListener("change", function (e) {
+            moveLeadStage(lead.id, e.target.value);
+          });
+          card.addEventListener("click", function () { openLeadPanel(lead.id); });
+
+          cardsEl.appendChild(card);
+        });
+
+        board.appendChild(column);
+      });
+    }
+
+    async function moveLeadStage(leadId, stage) {
+      try {
+        await api("/api/dashboard/leads/" + leadId, { method: "PUT", body: JSON.stringify({ stage: stage }) });
+        await loadBoard();
+      } catch (err) {
+        toast(err.message);
+      }
+    }
+
+    async function openLeadPanel(leadId) {
+      state.selectedLeadId = leadId;
+      try {
+        var data = await api("/api/dashboard/leads/" + leadId);
+        var lead = data.lead;
+
+        document.getElementById("lead-name").value = lead.name || "";
+        document.getElementById("lead-phone").value = lead.phone || "";
+        document.getElementById("lead-email").value = lead.email || "";
+        document.getElementById("lead-notes").value = lead.notes || "";
+
+        var convContainer = document.getElementById("lead-conversations");
+        convContainer.innerHTML = lead.conversations.length
+          ? lead.conversations.map(function (c) {
+              return '<div class="linked-conversation-row"><span>' + c.channel + " — " + escapeHtml(c.externalId) + '</span><a href="index.html?conversation=' + c.id + '">Open</a></div>';
+            }).join("")
+          : '<p class="section-desc">No conversations linked yet.</p>';
+
+        document.getElementById("overlay").classList.add("open");
+        document.getElementById("side-panel").style.display = "block";
+      } catch (err) {
+        toast(err.message);
+      }
+    }
+
+    function closeLeadPanel() {
+      document.getElementById("overlay").classList.remove("open");
+      document.getElementById("side-panel").style.display = "none";
+      state.selectedLeadId = null;
+    }
+
+    document.getElementById("close-panel-btn").addEventListener("click", closeLeadPanel);
+    document.getElementById("overlay").addEventListener("click", closeLeadPanel);
+
+    document.getElementById("save-lead-btn").addEventListener("click", async function () {
+      if (!state.selectedLeadId) return;
+      try {
+        await api("/api/dashboard/leads/" + state.selectedLeadId, {
+          method: "PUT",
+          body: JSON.stringify({
+            name: document.getElementById("lead-name").value,
+            phone: document.getElementById("lead-phone").value,
+            email: document.getElementById("lead-email").value,
+            notes: document.getElementById("lead-notes").value,
+          }),
+        });
+        toast("Saved");
+        await loadBoard();
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+
+    document.getElementById("logout-btn").addEventListener("click", async function () {
+      await fetch("/api/auth/logout", { method: "POST" });
+      window.location.href = "login.html";
+    });
+
+    (async function init() {
+      try {
+        await loadMe();
+        await loadBoard();
+      } catch (err) {
+        // loadMe already redirects to login.html on 401
+      }
+    })();
+  </script>
+</body>
+</html>

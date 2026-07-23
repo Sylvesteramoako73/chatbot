@@ -18,6 +18,7 @@ import {
   getBusinessById,
   getBusinessBySiteKey,
   getBusinessByWhatsAppPhoneNumberId,
+  getBusinessByInstagramPageId,
   updateBusinessSettings,
 } from "./businesses";
 import {
@@ -26,22 +27,40 @@ import {
   getConversationById,
   recordMessage,
   getMessages,
+  markConversationRead,
   listConversations,
   ConversationFilter,
   claimConversation,
+  assignConversation,
   closeConversation,
   requestHuman,
   relayReplyToWidget,
 } from "./conversations";
 import { subscribeToConversation, subscribeToBusiness } from "./events";
 import { sendWhatsAppText } from "./whatsapp";
+import { sendTelegramMessage, setTelegramWebhook } from "./telegram";
+import { sendInstagramMessage } from "./instagram";
+import { handleInboundMessage } from "./bot";
+import { savePushSubscription, deletePushSubscription, PushSubscriptionJSON } from "./push";
+import { notifyTeamMemberOfAssignment } from "./notifications";
+import {
+  listLeads,
+  getLeadWithConversations,
+  updateLeadStage,
+  updateLeadDetails,
+  mergeConversationIntoLead,
+  LeadStage,
+} from "./leads";
+import { getAnalyticsSummary } from "./analytics";
 
 const app = express();
+app.set("trust proxy", true); // needed so req.protocol reflects https behind Render's proxy
 app.use(cors({ origin: true })); // public widget API — see README for why this is intentionally open
 app.use(express.json({ limit: "2mb" }));
 app.use(createSessionMiddleware());
 app.use("/widget", express.static(path.join(__dirname, "..", "public")));
 app.use("/dashboard", express.static(path.join(__dirname, "..", "public", "dashboard")));
+app.use(express.static(path.join(__dirname, "..", "public", "site"))); // marketing landing page at "/"
 
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok" });
@@ -66,9 +85,11 @@ app.get("/api/auth/me", requireAuth, async (req: Request, res: Response) => {
 // sent, so origin-based gating can't happen at the cors() layer here).
 // ---------------------------------------------------------------------------
 
-// Held back from the live stream so we can detect (and strip) NEEDS_HUMAN_MARKER before it ever
-// reaches the customer — it's longer than the marker itself to leave margin for trailing whitespace.
-const MARKER_TAIL_BUFFER = 64;
+// Held back from the live stream so we can detect (and strip) NEEDS_HUMAN_MARKER (15 chars) before
+// it ever reaches the customer. Kept small — for short replies, a big reserve here would withhold
+// a large fraction of the message until the very end, making fast responses look like they arrived
+// in one dump instead of streaming.
+const MARKER_TAIL_BUFFER = 24;
 
 async function runBotReplyForWidget(
   conversation: Conversation,
@@ -79,7 +100,7 @@ async function runBotReplyForWidget(
 ): Promise<void> {
   let full = "";
   let tail = "";
-  for await (const token of streamChatResponse(conversation.businessId, business?.systemPrompt ?? null, message, history)) {
+  for await (const token of streamChatResponse(conversation.businessId, business?.name ?? "the business", business?.systemPrompt ?? null, message, history)) {
     full += token;
     tail += token;
     if (tail.length > MARKER_TAIL_BUFFER) {
@@ -156,6 +177,29 @@ app.post("/api/chat/handoff", async (req: Request, res: Response) => {
   }
 });
 
+app.post("/api/chat/name", async (req: Request, res: Response) => {
+  const { siteKey, sessionId, name } = req.body as { siteKey?: string; sessionId?: string; name?: string };
+  if (!siteKey || !sessionId || !name) {
+    return res.status(400).json({ error: "siteKey, sessionId, and name are required" });
+  }
+
+  const business = await getBusinessBySiteKey(siteKey);
+  if (!business) return res.status(404).json({ error: "Unknown site key" });
+
+  try {
+    // leadHint only applies when this call is what creates the conversation/lead — if the visitor
+    // already said something before naming themselves, the lead already exists, so also update it
+    // directly (updateLeadDetails only fills in a still-blank name, never overwrites one already set).
+    const conversation = await getOrCreateConversation(business.id, "widget", sessionId, { name });
+    await recordMessage(conversation, "customer", name);
+    if (conversation.leadId) await updateLeadDetails(conversation.leadId, { name });
+    res.json({ name });
+  } catch (err) {
+    console.error("Name capture error:", err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
 app.get("/api/chat/stream", (req: Request, res: Response) => {
   const { siteKey, sessionId } = req.query as { siteKey?: string; sessionId?: string };
   if (!siteKey || !sessionId) return res.status(400).end();
@@ -214,34 +258,103 @@ app.post("/api/webhooks/whatsapp", async (req: Request, res: Response) => {
           console.warn(`WhatsApp webhook: no business registered for phone_number_id ${phoneNumberId}`);
           continue;
         }
+        if (!business.whatsappToken || !business.whatsappPhoneNumberId) continue;
 
         for (const message of change.value?.messages ?? []) {
           if (message.type !== "text") continue;
-          const conversation = await getOrCreateConversation(business.id, "whatsapp", message.from);
-          await recordMessage(conversation, "customer", message.text.body);
-
-          if (conversation.mode !== "bot") continue; // claimed by a rep — they'll see it live in the dashboard
-
-          let full = "";
-          for await (const token of streamChatResponse(business.id, business.systemPrompt, message.text.body, [])) {
-            full += token;
-          }
-          const needsHuman = full.includes(NEEDS_HUMAN_MARKER);
-          const visibleFull = needsHuman ? full.replace(NEEDS_HUMAN_MARKER, "").replace(/\s+$/, "") : full;
-
-          if (!business.whatsappToken || !business.whatsappPhoneNumberId) continue;
-          const wamid = await sendWhatsAppText(
-            { token: business.whatsappToken, phoneNumberId: business.whatsappPhoneNumberId },
-            message.from,
-            visibleFull
+          const profileName = change.value?.contacts?.[0]?.profile?.name;
+          await handleInboundMessage(business, "whatsapp", message.from, message.text.body, { name: profileName }, (replyText) =>
+            sendWhatsAppText(
+              { token: business.whatsappToken!, phoneNumberId: business.whatsappPhoneNumberId! },
+              message.from,
+              replyText
+            )
           );
-          await recordMessage(conversation, "bot", visibleFull, wamid);
-          if (needsHuman) await requestHuman(conversation.id);
         }
       }
     }
   } catch (err) {
     console.error("WhatsApp webhook error:", err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Telegram webhook — each business gets its own bot (from @BotFather), so
+// unlike Meta's products there's no shared identifier to route by; the
+// business is resolved straight from the URL path instead. Setting the
+// webhook itself is automatic (see setTelegramWebhook, called from the
+// settings route below) rather than a manual dashboard step.
+// ---------------------------------------------------------------------------
+
+app.post("/api/webhooks/telegram/:businessId", async (req: Request, res: Response) => {
+  res.sendStatus(200); // acknowledge immediately, same reasoning as the WhatsApp webhook
+
+  try {
+    const business = await getBusinessById(req.params.businessId);
+    if (!business || !business.telegramBotToken) return;
+
+    const message = req.body?.message;
+    if (!message?.text || !message?.chat?.id) return;
+
+    const chatId = String(message.chat.id);
+    const name = message.from?.first_name ?? message.from?.username;
+
+    await handleInboundMessage(business, "telegram", chatId, message.text, { name }, (replyText) =>
+      sendTelegramMessage(business.telegramBotToken!, chatId, replyText)
+    );
+  } catch (err) {
+    console.error("Telegram webhook error:", err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Instagram webhook — same Meta Graph API family as WhatsApp, shared verify
+// token, business resolved by the Instagram-scoped Page id in the payload.
+// ---------------------------------------------------------------------------
+
+app.get("/api/webhooks/instagram", (req: Request, res: Response) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+    res.status(200).send(challenge);
+  } else {
+    res.sendStatus(403);
+  }
+});
+
+app.post("/api/webhooks/instagram", async (req: Request, res: Response) => {
+  res.sendStatus(200);
+
+  try {
+    const entries = req.body?.entry ?? [];
+    for (const entry of entries) {
+      const pageId = entry.id;
+      if (!pageId) continue;
+      const business = await getBusinessByInstagramPageId(pageId);
+      if (!business) {
+        console.warn(`Instagram webhook: no business registered for page id ${pageId}`);
+        continue;
+      }
+      if (!business.instagramToken || !business.instagramPageId) continue;
+
+      for (const event of entry.messaging ?? []) {
+        const igsid = event.sender?.id;
+        const text = event.message?.text;
+        if (!igsid || !text) continue;
+
+        await handleInboundMessage(business, "instagram", igsid, text, {}, (replyText) =>
+          sendInstagramMessage(
+            { pageId: business.instagramPageId!, token: business.instagramToken! },
+            igsid,
+            replyText
+          )
+        );
+      }
+    }
+  } catch (err) {
+    console.error("Instagram webhook error:", err);
   }
 });
 
@@ -267,7 +380,9 @@ app.get("/api/dashboard/conversations", requireAuth, async (req: Request, res: R
 app.get("/api/dashboard/conversations/:id/messages", requireAuth, async (req: Request, res: Response) => {
   const conversation = await loadOwnedConversation(req, res);
   if (!conversation) return;
-  res.json({ conversation, messages: await getMessages(conversation.id) });
+  const messages = await getMessages(conversation.id);
+  await markConversationRead(conversation.id); // opening a conversation is what marks it read
+  res.json({ conversation, messages });
 });
 
 app.post("/api/dashboard/conversations/:id/claim", requireAuth, async (req: Request, res: Response) => {
@@ -276,6 +391,22 @@ app.post("/api/dashboard/conversations/:id/claim", requireAuth, async (req: Requ
   const claimed = await claimConversation(conversation.id, req.session.teamMemberId!);
   if (!claimed) return res.status(409).json({ error: "Already claimed by someone else" });
   res.json({ conversation: claimed });
+});
+
+app.post("/api/dashboard/conversations/:id/assign", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const conversation = await loadOwnedConversation(req, res);
+  if (!conversation) return;
+
+  const { teamMemberId } = req.body as { teamMemberId?: string };
+  if (!teamMemberId) return res.status(400).json({ error: "teamMemberId is required" });
+
+  const team = await listTeamMembers(req.session.businessId!);
+  const target = team.find((member) => member.id === teamMemberId);
+  if (!target) return res.status(400).json({ error: "That person isn't on this business's team" });
+
+  const assigned = await assignConversation(conversation.id, teamMemberId);
+  void notifyTeamMemberOfAssignment(teamMemberId, target.email, assigned);
+  res.json({ conversation: assigned });
 });
 
 app.post("/api/dashboard/conversations/:id/close", requireAuth, async (req: Request, res: Response) => {
@@ -292,21 +423,39 @@ app.post("/api/dashboard/conversations/:id/reply", requireAuth, async (req: Requ
   if (!text) return res.status(400).json({ error: "text is required" });
 
   try {
-    let wamid: string | null = null;
+    let messageId: string | null = null;
+
     if (conversation.channel === "widget") {
       relayReplyToWidget(conversation, text);
-    } else {
+    } else if (conversation.channel === "whatsapp") {
       const business = await getBusinessById(conversation.businessId);
       if (!business?.whatsappToken || !business.whatsappPhoneNumberId) {
         return res.status(400).json({ error: "This business hasn't connected WhatsApp credentials yet" });
       }
-      wamid = await sendWhatsAppText(
+      messageId = await sendWhatsAppText(
         { token: business.whatsappToken, phoneNumberId: business.whatsappPhoneNumberId },
         conversation.externalId,
         text
       );
+    } else if (conversation.channel === "telegram") {
+      const business = await getBusinessById(conversation.businessId);
+      if (!business?.telegramBotToken) {
+        return res.status(400).json({ error: "This business hasn't connected Telegram yet" });
+      }
+      messageId = await sendTelegramMessage(business.telegramBotToken, conversation.externalId, text);
+    } else if (conversation.channel === "instagram") {
+      const business = await getBusinessById(conversation.businessId);
+      if (!business?.instagramToken || !business.instagramPageId) {
+        return res.status(400).json({ error: "This business hasn't connected Instagram yet" });
+      }
+      messageId = await sendInstagramMessage(
+        { pageId: business.instagramPageId, token: business.instagramToken },
+        conversation.externalId,
+        text
+      );
     }
-    await recordMessage(conversation, "agent", text, wamid);
+
+    await recordMessage(conversation, "agent", text, messageId);
     res.json({ status: "sent" });
   } catch (err) {
     console.error("Dashboard reply error:", err);
@@ -337,14 +486,40 @@ app.get("/api/dashboard/settings", requireAuth, requireAdmin, async (req: Reques
 });
 
 app.put("/api/dashboard/settings", requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const { systemPrompt, allowedOrigin, whatsappToken, whatsappPhoneNumberId, whatsappTemplateName } = req.body;
+  const {
+    systemPrompt,
+    allowedOrigin,
+    whatsappToken,
+    whatsappPhoneNumberId,
+    whatsappTemplateName,
+    telegramBotToken,
+    instagramPageId,
+    instagramToken,
+  } = req.body;
+
   const business = await updateBusinessSettings(req.session.businessId!, {
     systemPrompt,
     allowedOrigin,
     whatsappToken,
     whatsappPhoneNumberId,
     whatsappTemplateName,
+    telegramBotToken,
+    instagramPageId,
+    instagramToken,
   });
+
+  // Telegram has no separate "register this webhook in a dashboard" step like WhatsApp/Instagram —
+  // saving the token here is the whole setup, so we register it with Telegram ourselves.
+  if (telegramBotToken) {
+    try {
+      const webhookUrl = `${req.protocol}://${req.get("host")}/api/webhooks/telegram/${business.id}`;
+      await setTelegramWebhook(telegramBotToken, webhookUrl);
+    } catch (err) {
+      console.error("Telegram webhook registration failed:", err);
+      return res.status(400).json({ error: "Saved, but registering the Telegram webhook failed — check the bot token" });
+    }
+  }
+
   res.json({ business });
 });
 
@@ -364,6 +539,90 @@ app.post("/api/dashboard/team", requireAuth, requireAdmin, async (req: Request, 
   }
   const id = await addTeamMember(req.session.businessId!, email, password, name, role ?? "agent");
   res.json({ id });
+});
+
+// ---------------------------------------------------------------------------
+// Push notifications — so a rep gets pinged even when the dashboard tab isn't open
+// ---------------------------------------------------------------------------
+
+app.get("/api/dashboard/push/public-key", requireAuth, (_req: Request, res: Response) => {
+  res.json({ publicKey: process.env.VAPID_PUBLIC_KEY ?? null });
+});
+
+app.post("/api/dashboard/push/subscribe", requireAuth, async (req: Request, res: Response) => {
+  const subscription = req.body as PushSubscriptionJSON;
+  if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+    return res.status(400).json({ error: "A valid push subscription object is required" });
+  }
+  await savePushSubscription(req.session.teamMemberId!, subscription);
+  res.json({ status: "subscribed" });
+});
+
+app.post("/api/dashboard/push/unsubscribe", requireAuth, async (req: Request, res: Response) => {
+  const { endpoint } = req.body as { endpoint?: string };
+  if (!endpoint) return res.status(400).json({ error: "endpoint is required" });
+  await deletePushSubscription(endpoint);
+  res.json({ status: "unsubscribed" });
+});
+
+// ---------------------------------------------------------------------------
+// Leads / CRM pipeline
+// ---------------------------------------------------------------------------
+
+app.get("/api/dashboard/leads", requireAuth, async (req: Request, res: Response) => {
+  res.json({ leads: await listLeads(req.session.businessId!) });
+});
+
+app.get("/api/dashboard/leads/:id", requireAuth, async (req: Request, res: Response) => {
+  const lead = await getLeadWithConversations(req.params.id);
+  if (!lead || lead.businessId !== req.session.businessId) {
+    return res.status(404).json({ error: "Lead not found" });
+  }
+  res.json({ lead });
+});
+
+app.put("/api/dashboard/leads/:id", requireAuth, async (req: Request, res: Response) => {
+  const lead = await getLeadWithConversations(req.params.id);
+  if (!lead || lead.businessId !== req.session.businessId) {
+    return res.status(404).json({ error: "Lead not found" });
+  }
+
+  const { stage, name, phone, email, notes } = req.body as {
+    stage?: LeadStage;
+    name?: string;
+    phone?: string;
+    email?: string;
+    notes?: string;
+  };
+
+  if (stage) await updateLeadStage(lead.id, stage);
+  if (name !== undefined || phone !== undefined || email !== undefined || notes !== undefined) {
+    await updateLeadDetails(lead.id, { name, phone, email, notes });
+  }
+
+  res.json({ lead: await getLeadWithConversations(lead.id) });
+});
+
+app.post("/api/dashboard/leads/:id/merge", requireAuth, async (req: Request, res: Response) => {
+  const lead = await getLeadWithConversations(req.params.id);
+  if (!lead || lead.businessId !== req.session.businessId) {
+    return res.status(404).json({ error: "Lead not found" });
+  }
+
+  const { conversationId } = req.body as { conversationId?: string };
+  if (!conversationId) return res.status(400).json({ error: "conversationId is required" });
+
+  const conversation = await getConversationById(conversationId);
+  if (!conversation || conversation.businessId !== req.session.businessId) {
+    return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  await mergeConversationIntoLead(conversationId, lead.id);
+  res.json({ lead: await getLeadWithConversations(lead.id) });
+});
+
+app.get("/api/dashboard/analytics", requireAuth, async (req: Request, res: Response) => {
+  res.json(await getAnalyticsSummary(req.session.businessId!));
 });
 
 // ---------------------------------------------------------------------------

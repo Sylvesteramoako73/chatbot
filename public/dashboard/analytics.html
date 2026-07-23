@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Analytics — Chatbot Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+      <span id="business-name">Analytics</span>
+    </div>
+    <nav>
+      <a href="index.html">Inbox</a>
+      <a href="leads.html">Leads</a>
+      <a href="analytics.html" class="active">Analytics</a>
+      <a href="settings.html">Settings</a>
+      <button class="icon-btn" id="logout-btn">Log out</button>
+    </nav>
+  </header>
+
+  <div class="settings-shell analytics-shell">
+
+    <div class="stat-tiles" id="stat-tiles"></div>
+
+    <section class="settings-section">
+      <div class="chart-header">
+        <h2>New leads, last 30 days</h2>
+        <p class="section-desc">Daily count of new leads created across every channel.</p>
+      </div>
+      <div class="line-chart-wrap">
+        <svg id="line-chart" viewBox="0 0 640 200" preserveAspectRatio="none"></svg>
+        <div class="chart-tooltip" id="line-tooltip"></div>
+      </div>
+    </section>
+
+    <div class="analytics-grid">
+      <section class="settings-section">
+        <div class="chart-header">
+          <h2>Pipeline funnel</h2>
+          <p class="section-desc">Leads by stage right now.</p>
+        </div>
+        <div id="funnel-chart"></div>
+      </section>
+
+      <section class="settings-section">
+        <div class="chart-header">
+          <h2>Conversations by channel</h2>
+          <p class="section-desc">Where conversations are coming from.</p>
+        </div>
+        <div class="donut-wrap">
+          <div class="donut" id="channel-donut"></div>
+          <ul class="donut-legend" id="channel-legend"></ul>
+        </div>
+      </section>
+    </div>
+
+    <section class="settings-section">
+      <div class="chart-header">
+        <h2>Team performance</h2>
+        <p class="section-desc">Conversations handled per team member (claimed or assigned).</p>
+      </div>
+      <div id="agent-chart"></div>
+    </section>
+
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    var STAGES = [
+      { key: "new", label: "New", kind: "neutral" },
+      { key: "contacted", label: "Contacted", kind: "neutral" },
+      { key: "qualified", label: "Qualified", kind: "neutral" },
+      { key: "negotiating", label: "Negotiating", kind: "neutral" },
+      { key: "won", label: "Won", kind: "success" },
+      { key: "lost", label: "Lost", kind: "danger" },
+    ];
+
+    var CHANNEL_META = {
+      widget: { label: "Website", varName: "--chart-widget" },
+      whatsapp: { label: "WhatsApp", varName: "--chart-whatsapp" },
+      telegram: { label: "Telegram", varName: "--chart-telegram" },
+      instagram: { label: "Instagram", varName: "--chart-instagram" },
+    };
+
+    function toast(message) {
+      var el = document.getElementById("toast");
+      el.textContent = message;
+      el.classList.add("visible");
+      setTimeout(function () { el.classList.remove("visible"); }, 2500);
+    }
+
+    function escapeHtml(str) {
+      var div = document.createElement("div");
+      div.textContent = str || "";
+      return div.innerHTML;
+    }
+
+    async function api(path) {
+      var res = await fetch(path);
+      if (res.status === 401) {
+        window.location.href = "login.html";
+        throw new Error("Not authenticated");
+      }
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      return data;
+    }
+
+    async function loadMe() {
+      var data = await api("/api/auth/me");
+      document.getElementById("business-name").textContent = data.business ? data.business.name : "Analytics";
+    }
+
+    function cssVar(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function renderStatTiles(summary) {
+      var stages = summary.leadStages.byStage;
+      var tiles = [
+        { label: "Total leads", value: summary.leadStages.total, kind: "neutral" },
+        { label: "Total conversations", value: summary.totalConversations, kind: "neutral" },
+        { label: "Conversion rate", value: Math.round(summary.conversionRate * 100) + "%", kind: "neutral" },
+        { label: "Won", value: stages.won, kind: "success" },
+        { label: "Lost", value: stages.lost, kind: "danger" },
+      ];
+      document.getElementById("stat-tiles").innerHTML = tiles.map(function (t) {
+        return (
+          '<div class="stat-tile stat-tile-' + t.kind + '">' +
+          '<div class="stat-tile-value">' + t.value + "</div>" +
+          '<div class="stat-tile-label">' + t.label + "</div>" +
+          "</div>"
+        );
+      }).join("");
+    }
+
+    function renderFunnel(byStage) {
+      var maxCount = Math.max.apply(null, STAGES.map(function (s) { return byStage[s.key]; }).concat([1]));
+      document.getElementById("funnel-chart").innerHTML = STAGES.map(function (s) {
+        var count = byStage[s.key];
+        var widthPct = Math.round((count / maxCount) * 100);
+        return (
+          '<div class="funnel-row" title="' + count + " lead" + (count === 1 ? "" : "s") + " in " + s.label + '">' +
+          '<span class="funnel-label">' + s.label + "</span>" +
+          '<div class="funnel-track"><div class="funnel-bar funnel-bar-' + s.kind + '" style="width:' + widthPct + '%"></div></div>' +
+          '<span class="funnel-value">' + count + "</span>" +
+          "</div>"
+        );
+      }).join("");
+    }
+
+    function renderChannelDonut(byChannel) {
+      var total = byChannel.reduce(function (sum, c) { return sum + c.count; }, 0);
+      var donut = document.getElementById("channel-donut");
+      var legend = document.getElementById("channel-legend");
+
+      if (!total) {
+        donut.style.background = cssVar("--color-border");
+        legend.innerHTML = '<li class="section-desc">No conversations yet.</li>';
+        return;
+      }
+
+      var stops = [];
+      var cursor = 0;
+      var legendHtml = "";
+      byChannel.forEach(function (c) {
+        var meta = CHANNEL_META[c.channel] || { label: c.channel, varName: "--color-muted" };
+        var pct = (c.count / total) * 100;
+        var color = cssVar(meta.varName);
+        stops.push(color + " " + cursor + "% " + (cursor + pct) + "%");
+        cursor += pct;
+        legendHtml +=
+          '<li><span class="legend-swatch" style="background:' + color + '"></span>' +
+          escapeHtml(meta.label) + " — " + c.count + " (" + Math.round(pct) + "%)</li>";
+      });
+
+      donut.style.background = "conic-gradient(" + stops.join(",") + ")";
+      legend.innerHTML = legendHtml;
+    }
+
+    function renderAgentChart(byAgent) {
+      var container = document.getElementById("agent-chart");
+      if (!byAgent.length) {
+        container.innerHTML = '<p class="section-desc">No conversations claimed or assigned yet.</p>';
+        return;
+      }
+      var maxCount = Math.max.apply(null, byAgent.map(function (a) { return a.count; }).concat([1]));
+      container.innerHTML = byAgent.map(function (a) {
+        var widthPct = Math.round((a.count / maxCount) * 100);
+        return (
+          '<div class="funnel-row" title="' + a.count + " conversation" + (a.count === 1 ? "" : "s") + '">' +
+          '<span class="funnel-label">' + escapeHtml(a.name) + "</span>" +
+          '<div class="funnel-track"><div class="funnel-bar" style="width:' + widthPct + '%"></div></div>' +
+          '<span class="funnel-value">' + a.count + "</span>" +
+          "</div>"
+        );
+      }).join("");
+    }
+
+    function renderLineChart(leadsByDay) {
+      var svg = document.getElementById("line-chart");
+      var tooltip = document.getElementById("line-tooltip");
+      var W = 640, H = 200, padL = 24, padR = 12, padT = 16, padB = 24;
+      var innerW = W - padL - padR, innerH = H - padT - padB;
+
+      var maxCount = Math.max.apply(null, leadsByDay.map(function (d) { return d.count; }).concat([1]));
+      var stepX = innerW / (leadsByDay.length - 1);
+      var accent = cssVar("--color-accent");
+      var muted = cssVar("--color-muted");
+      var border = cssVar("--color-border");
+
+      function xAt(i) { return padL + i * stepX; }
+      function yAt(count) { return padT + innerH - (count / maxCount) * innerH; }
+
+      var linePoints = leadsByDay.map(function (d, i) { return xAt(i) + "," + yAt(d.count); }).join(" ");
+      var areaPoints = linePoints + " " + xAt(leadsByDay.length - 1) + "," + (padT + innerH) + " " + xAt(0) + "," + (padT + innerH);
+
+      var gridLines = "";
+      for (var g = 0; g <= 2; g++) {
+        var gy = padT + (innerH / 2) * g;
+        gridLines += '<line x1="' + padL + '" y1="' + gy + '" x2="' + (W - padR) + '" y2="' + gy + '" stroke="' + border + '" stroke-width="1" />';
+      }
+
+      var hitCircles = leadsByDay.map(function (d, i) {
+        return '<circle class="line-hit" data-index="' + i + '" cx="' + xAt(i) + '" cy="' + yAt(d.count) + '" r="8" fill="transparent" />';
+      }).join("");
+
+      svg.innerHTML =
+        gridLines +
+        '<polygon points="' + areaPoints + '" fill="' + accent + '" opacity="0.12" />' +
+        '<polyline points="' + linePoints + '" fill="none" stroke="' + accent + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />' +
+        '<text x="' + padL + '" y="' + (H - 6) + '" font-size="10" fill="' + muted + '">' + leadsByDay[0].date + "</text>" +
+        '<text x="' + (W - padR) + '" y="' + (H - 6) + '" font-size="10" fill="' + muted + '" text-anchor="end">' + leadsByDay[leadsByDay.length - 1].date + "</text>" +
+        hitCircles;
+
+      svg.querySelectorAll(".line-hit").forEach(function (circle) {
+        circle.addEventListener("mouseenter", function () {
+          var i = Number(circle.getAttribute("data-index"));
+          var d = leadsByDay[i];
+          var rect = svg.getBoundingClientRect();
+          var px = rect.left + (xAt(i) / W) * rect.width;
+          var py = rect.top + (yAt(d.count) / H) * rect.height;
+          tooltip.textContent = d.date + ": " + d.count + " new lead" + (d.count === 1 ? "" : "s");
+          tooltip.style.left = (px - rect.left) + "px";
+          tooltip.style.top = (py - rect.top - 30) + "px";
+          tooltip.classList.add("visible");
+        });
+        circle.addEventListener("mouseleave", function () {
+          tooltip.classList.remove("visible");
+        });
+      });
+    }
+
+    document.getElementById("logout-btn").addEventListener("click", async function () {
+      await fetch("/api/auth/logout", { method: "POST" });
+      window.location.href = "login.html";
+    });
+
+    (async function init() {
+      try {
+        await loadMe();
+        var summary = await api("/api/dashboard/analytics");
+        renderStatTiles(summary);
+        renderFunnel(summary.leadStages.byStage);
+        renderChannelDonut(summary.conversationsByChannel);
+        renderAgentChart(summary.conversationsByAgent);
+        renderLineChart(summary.leadsByDay);
+      } catch (err) {
+        toast(err.message);
+      }
+    })();
+  </script>
+</body>
+</html>

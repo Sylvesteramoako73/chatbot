@@ -1,7 +1,9 @@
 import { pool } from "./db";
 import { publishToConversation, publishToBusiness } from "./events";
+import { createLead, markLeadContactedIfNew } from "./leads";
+import { notifyTeamOfEscalation } from "./notifications";
 
-export type Channel = "widget" | "whatsapp";
+export type Channel = "widget" | "whatsapp" | "telegram" | "instagram";
 export type MessageRole = "customer" | "bot" | "agent";
 
 export interface Conversation {
@@ -11,6 +13,7 @@ export interface Conversation {
   externalId: string;
   mode: "bot" | "human";
   claimedBy: string | null;
+  leadId: string | null;
   closedAt: string | null;
 }
 
@@ -21,6 +24,7 @@ interface ConversationRow {
   external_id: string;
   mode: "bot" | "human";
   claimed_by: string | null;
+  lead_id: string | null;
   closed_at: string | null;
 }
 
@@ -32,16 +36,24 @@ function toConversation(row: ConversationRow): Conversation {
     externalId: row.external_id,
     mode: row.mode,
     claimedBy: row.claimed_by,
+    leadId: row.lead_id,
     closedAt: row.closed_at,
   };
 }
 
-const COLUMNS = "id, business_id, channel, external_id, mode, claimed_by, closed_at";
+const COLUMNS = "id, business_id, channel, external_id, mode, claimed_by, lead_id, closed_at";
 
+export interface LeadHint {
+  name?: string;
+  phone?: string;
+}
+
+/** Creates a brand-new conversation's lead too (see src/leads.ts on why merging across channels is manual). */
 export async function getOrCreateConversation(
   businessId: string,
   channel: Channel,
-  externalId: string
+  externalId: string,
+  leadHint: LeadHint = {}
 ): Promise<Conversation> {
   const existing = await pool.query<ConversationRow>(
     `SELECT ${COLUMNS} FROM conversations WHERE business_id = $1 AND channel = $2 AND external_id = $3`,
@@ -49,9 +61,11 @@ export async function getOrCreateConversation(
   );
   if (existing.rows.length) return toConversation(existing.rows[0]);
 
+  const lead = await createLead(businessId, leadHint);
+
   const inserted = await pool.query<ConversationRow>(
-    `INSERT INTO conversations (business_id, channel, external_id) VALUES ($1, $2, $3) RETURNING ${COLUMNS}`,
-    [businessId, channel, externalId]
+    `INSERT INTO conversations (business_id, channel, external_id, lead_id) VALUES ($1, $2, $3, $4) RETURNING ${COLUMNS}`,
+    [businessId, channel, externalId, lead.id]
   );
   const conversation = toConversation(inserted.rows[0]);
   publishToBusiness(businessId, { type: "new_conversation", conversationId: conversation.id, channel, externalId });
@@ -73,13 +87,21 @@ export async function recordMessage(
     "INSERT INTO conversation_messages (conversation_id, role, content, wamid) VALUES ($1, $2, $3, $4)",
     [conversation.id, role, content, wamid]
   );
-  await pool.query("UPDATE conversations SET updated_at = now() WHERE id = $1", [conversation.id]);
+  await pool.query(
+    `UPDATE conversations SET updated_at = now(), unread_count = unread_count + $2 WHERE id = $1`,
+    [conversation.id, role === "customer" ? 1 : 0]
+  );
   publishToBusiness(conversation.businessId, {
     type: "new_message",
     conversationId: conversation.id,
     role,
     content,
   });
+}
+
+/** Opening a conversation is what marks it read — no separate "mark read" action for reps to take. */
+export async function markConversationRead(conversationId: string): Promise<void> {
+  await pool.query("UPDATE conversations SET unread_count = 0 WHERE id = $1", [conversationId]);
 }
 
 export interface StoredMessage {
@@ -108,6 +130,7 @@ export interface ConversationSummary {
   closedAt: string | null;
   updatedAt: string;
   lastMessage: string | null;
+  unreadCount: number;
 }
 
 export async function listConversations(
@@ -127,7 +150,7 @@ export async function listConversations(
 
   const result = await pool.query(
     `SELECT c.id, c.channel, c.external_id, c.mode, c.claimed_by, tm.name AS claimed_by_name,
-            c.closed_at, c.updated_at,
+            c.closed_at, c.updated_at, c.unread_count,
             (SELECT content FROM conversation_messages m
              WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message
      FROM conversations c
@@ -148,6 +171,7 @@ export async function listConversations(
     closedAt: r.closed_at,
     updatedAt: r.updated_at,
     lastMessage: r.last_message,
+    unreadCount: r.unread_count,
   }));
 }
 
@@ -167,6 +191,26 @@ export async function claimConversation(conversationId: string, teamMemberId: st
     conversationId: conversation.id,
     claimedBy: teamMemberId,
   });
+  if (conversation.leadId) void markLeadContactedIfNew(conversation.leadId);
+  return conversation;
+}
+
+/** Admin override — unlike claimConversation, reassigns even if it's already claimed by someone else. */
+export async function assignConversation(conversationId: string, teamMemberId: string): Promise<Conversation> {
+  const result = await pool.query<ConversationRow>(
+    `UPDATE conversations SET claimed_by = $1, mode = 'human', updated_at = now()
+     WHERE id = $2
+     RETURNING ${COLUMNS}`,
+    [teamMemberId, conversationId]
+  );
+
+  const conversation = toConversation(result.rows[0]);
+  publishToBusiness(conversation.businessId, {
+    type: "claimed",
+    conversationId: conversation.id,
+    claimedBy: teamMemberId,
+  });
+  if (conversation.leadId) void markLeadContactedIfNew(conversation.leadId);
   return conversation;
 }
 
@@ -176,6 +220,7 @@ export async function requestHuman(conversationId: string): Promise<void> {
   const conversation = await getConversationById(conversationId);
   if (conversation) {
     publishToBusiness(conversation.businessId, { type: "mode_changed", conversationId, mode: "human" });
+    void notifyTeamOfEscalation(conversation);
   }
 }
 

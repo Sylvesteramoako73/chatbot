@@ -10,6 +10,9 @@ export interface Business {
   whatsappToken: string | null;
   whatsappPhoneNumberId: string | null;
   whatsappTemplateName: string | null;
+  telegramBotToken: string | null;
+  instagramPageId: string | null;
+  instagramToken: string | null;
 }
 
 interface BusinessRow {
@@ -21,10 +24,14 @@ interface BusinessRow {
   whatsapp_token: string | null;
   whatsapp_phone_number_id: string | null;
   whatsapp_template_name: string | null;
+  telegram_bot_token: string | null;
+  instagram_page_id: string | null;
+  instagram_token: string | null;
 }
 
 const COLUMNS =
-  "id, name, site_key, allowed_origin, system_prompt, whatsapp_token, whatsapp_phone_number_id, whatsapp_template_name";
+  "id, name, site_key, allowed_origin, system_prompt, whatsapp_token, whatsapp_phone_number_id, " +
+  "whatsapp_template_name, telegram_bot_token, instagram_page_id, instagram_token";
 
 function toBusiness(row: BusinessRow): Business {
   return {
@@ -36,6 +43,9 @@ function toBusiness(row: BusinessRow): Business {
     whatsappToken: row.whatsapp_token,
     whatsappPhoneNumberId: row.whatsapp_phone_number_id,
     whatsappTemplateName: row.whatsapp_template_name,
+    telegramBotToken: row.telegram_bot_token,
+    instagramPageId: row.instagram_page_id,
+    instagramToken: row.instagram_token,
   };
 }
 
@@ -69,12 +79,22 @@ export async function getBusinessByWhatsAppPhoneNumberId(phoneNumberId: string):
   return result.rows.length ? toBusiness(result.rows[0]) : null;
 }
 
+export async function getBusinessByInstagramPageId(pageId: string): Promise<Business | null> {
+  const result = await pool.query<BusinessRow>(`SELECT ${COLUMNS} FROM businesses WHERE instagram_page_id = $1`, [
+    pageId,
+  ]);
+  return result.rows.length ? toBusiness(result.rows[0]) : null;
+}
+
 export interface BusinessSettingsUpdate {
   systemPrompt?: string | null;
   allowedOrigin?: string | null;
   whatsappToken?: string | null;
   whatsappPhoneNumberId?: string | null;
   whatsappTemplateName?: string | null;
+  telegramBotToken?: string | null;
+  instagramPageId?: string | null;
+  instagramToken?: string | null;
 }
 
 export async function updateBusinessSettings(id: string, updates: BusinessSettingsUpdate): Promise<Business> {
@@ -84,7 +104,10 @@ export async function updateBusinessSettings(id: string, updates: BusinessSettin
        allowed_origin = COALESCE($3, allowed_origin),
        whatsapp_token = COALESCE($4, whatsapp_token),
        whatsapp_phone_number_id = COALESCE($5, whatsapp_phone_number_id),
-       whatsapp_template_name = COALESCE($6, whatsapp_template_name)
+       whatsapp_template_name = COALESCE($6, whatsapp_template_name),
+       telegram_bot_token = COALESCE($7, telegram_bot_token),
+       instagram_page_id = COALESCE($8, instagram_page_id),
+       instagram_token = COALESCE($9, instagram_token)
      WHERE id = $1
      RETURNING ${COLUMNS}`,
     [
@@ -94,6 +117,9 @@ export async function updateBusinessSettings(id: string, updates: BusinessSettin
       updates.whatsappToken,
       updates.whatsappPhoneNumberId,
       updates.whatsappTemplateName,
+      updates.telegramBotToken,
+      updates.instagramPageId,
+      updates.instagramToken,
     ]
   );
   return toBusiness(result.rows[0]);

@@ -1,11 +1,12 @@
 # Website Chatbot
 
-A multi-tenant RAG (retrieval-augmented generation) chatbot platform. Each business signs up, feeds
-it their site content (crawled automatically, or via manually-uploaded docs), embeds a widget on
-their own website, and optionally connects their own WhatsApp Business number. A bot answers
-visitor questions automatically — grounded in that business's own content — and a team inbox
-dashboard lets reps pick up any conversation (from the widget *or* WhatsApp) and reply directly,
-live, from one screen.
+A multi-tenant RAG (retrieval-augmented generation) chatbot platform with a lightweight CRM. Each
+business signs up, feeds it their site content (crawled automatically, or via manually-uploaded
+docs), embeds a widget on their own website, and optionally connects WhatsApp, Instagram, and/or
+Telegram. A bot answers visitor questions automatically — grounded in that business's own content —
+and a team inbox dashboard lets reps pick up any conversation across any of those channels and
+reply directly, live, from one screen. Every conversation is also tied to a **lead**, tracked
+through a sales pipeline (New → Contacted → Qualified → Negotiating → Won/Lost) on its own board.
 
 ## Architecture
 
@@ -14,11 +15,13 @@ Business signs up --> gets a site key + a team dashboard
 Website / docs --(crawl or upload, scoped to that business)--> chunk --> Voyage embeddings --> pgvector
                                                                                    |
 Visitor message --(widget.js, data-site-key)--> POST /api/chat --> retrieve --> bot answers (Groq)
-Customer WhatsApp message --> webhook (routed by phone_number_id) --> same retrieval --> bot answers
+Customer message on WhatsApp / Instagram / Telegram --> webhook --> same retrieval --> bot answers
+                                                                                   |
+                              Each new conversation gets its own lead on the CRM board (New stage)
                                                                                    |
                                               Rep "picks up" the conversation in the dashboard
                                                                                    |
-                                    Rep reply --> widget (Server-Sent Events) or WhatsApp (Cloud API)
+                          Rep reply --> widget (Server-Sent Events) or the customer's own channel
 ```
 
 - **Backend**: Node.js + TypeScript + Express
@@ -73,18 +76,20 @@ Customer WhatsApp message --> webhook (routed by phone_number_id) --> same retri
 
 ## Team inbox dashboard
 
-`http://localhost:3000/dashboard/index.html` — a live inbox across both channels (widget + WhatsApp):
+`http://localhost:3000/dashboard/index.html` — a live inbox across every connected channel:
 
 - **Unclaimed / Mine / All** tabs filter the conversation list.
 - Clicking a conversation shows the full thread and, if unclaimed, a **Pick up** button. Claiming is
   atomic — if two reps click at once, only one wins.
 - Once claimed, replies are typed directly in the dashboard. They relay out live over whichever
   channel the customer used: **Server-Sent Events** back into the widget (no page reload on the
-  visitor's end), or the **WhatsApp Cloud API** if the customer messaged the connected number.
+  visitor's end), or the customer's own WhatsApp/Instagram/Telegram via that platform's API.
 - **Closing** a conversation hands it back to the bot, so if that same customer writes again later
   the bot answers automatically until someone picks it up again.
 - The widget also has a **"Talk to a person"** button the visitor can click to flag their own
   conversation as needing a human, without waiting for the bot to fail first.
+- **"Link to lead"** in a conversation's thread lets a rep manually attach it to an existing lead —
+  see [Leads / CRM pipeline](#leads--crm-pipeline) for why this is a manual step.
 
 There are two ways a conversation reaches the sales team:
 
@@ -96,6 +101,32 @@ There are two ways a conversation reaches the sales team:
    the widget — pushes a short "I've flagged this for our team" notice into the chat live so the
    visitor knows what happened. Either way, the conversation just shows up unclaimed in the
    dashboard for any rep to pick up.
+
+Either path calls the same `requestHuman()` (`src/conversations.ts`), which is also what triggers
+**notifications** — see below.
+
+## Notifications
+
+The live dashboard only helps if someone's looking at it. The moment a conversation needs a human
+(either path above), every team member gets:
+
+- **A browser push notification** — works even with the dashboard tab closed, as long as the
+  browser is running. Click it to jump straight to that conversation.
+- **An email**, if the business has one configured.
+
+Setup:
+
+1. **Push**: run `npx web-push generate-vapid-keys` once for the whole deployment (not per
+   business), set `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`. Each rep then clicks
+   "Enable notifications on this device" in Settings — a one-time, per-device opt-in, since browsers
+   require a user gesture to prompt for permission.
+2. **Email**: sign up at [resend.com](https://resend.com), set `RESEND_API_KEY`. Their
+   `onboarding@resend.dev` sender works without verifying your own domain to get started; verify a
+   real domain later for better deliverability.
+
+Push and email are independent — skip either one's env vars and that channel just no-ops (logged,
+not thrown) while the other keeps working. There's no per-rep opt-out yet; every team member gets
+notified on every escalation.
 
 ## WhatsApp connection
 
@@ -124,6 +155,44 @@ account.
   requires Meta Tech Provider approval, an external business-verification process. Not built —
   businesses paste their own credentials for now.
 
+## Instagram connection
+
+Same Meta Graph API family as WhatsApp, same caveats: a business's own Facebook Page (with an
+Instagram professional account connected) needs its own Meta App with **business verification** —
+no shortcut around that. Setup from Settings → Instagram connection:
+
+1. Paste the Page Access Token and Page ID.
+2. Register a webhook in that Meta App pointing at `https://your-server.example.com/api/webhooks/instagram`,
+   subscribed to Instagram messaging events, using the same `WHATSAPP_VERIFY_TOKEN` value (one
+   platform-wide verify secret shared across Meta products, same reasoning as WhatsApp's).
+
+## Telegram connection
+
+The easy one — no business verification, no manual dashboard webhook step:
+
+1. Message [@BotFather](https://t.me/BotFather) on Telegram, create a bot, copy the token it gives you.
+2. Paste it into Settings → Telegram connection and save. The server registers the webhook with
+   Telegram itself at that point — nothing else to configure.
+
+## Leads / CRM pipeline
+
+`http://localhost:3000/dashboard/leads.html` — every conversation is tied to a lead, and every lead
+moves through: **New → Contacted → Qualified → Negotiating → Won/Lost**. Change a lead's stage from
+the dropdown on its card; click a card to edit its name/phone/email/notes or jump to its linked
+conversation(s).
+
+**Identity resolution across channels is manual, not automatic.** There's no reliable shared
+identifier between a WhatsApp phone number, a Telegram chat ID, and an Instagram-scoped user ID, so
+every new conversation gets its own new lead by default (named from whatever profile info the
+platform provides — e.g. Telegram's first name — or left blank for the widget). If a rep recognizes
+that a WhatsApp conversation and a website-widget conversation are the same person, they use
+**"Link to lead"** on the conversation (in the inbox) to search for and attach it to the existing
+lead instead. Pretending to auto-merge across channels would just be guessing — this is a real
+limitation, not something silently papered over.
+
+Lead stage and conversation `mode`/claim status are intentionally independent — moving a lead to
+Won/Lost does not auto-close its conversations; reps close those the same way they already do.
+
 ## API
 
 - `POST /api/chat` — `{ siteKey, sessionId, message, history? }` → streamed plain-text bot response,
@@ -131,13 +200,18 @@ account.
 - `POST /api/chat/handoff` — `{ siteKey, sessionId }` → flags the conversation as needing a human
 - `GET /api/chat/stream?siteKey=...&sessionId=...` — Server-Sent Events; pushes a rep's reply live
 - `POST /api/webhooks/whatsapp` / `GET /api/webhooks/whatsapp` — Meta Cloud API webhook
+- `POST /api/webhooks/instagram` / `GET /api/webhooks/instagram` — Meta Cloud API webhook
+- `POST /api/webhooks/telegram/:businessId` — Telegram webhook (no GET verification needed)
 - `POST /api/auth/signup` / `login` / `logout`, `GET /api/auth/me`
 - `GET /api/dashboard/conversations?filter=unclaimed|mine|all`
 - `GET /api/dashboard/conversations/:id/messages`
 - `POST /api/dashboard/conversations/:id/claim` / `close` / `reply`
 - `GET /api/dashboard/stream` — SSE, live updates for the whole inbox
-- `GET`/`PUT /api/dashboard/settings` — system prompt, WhatsApp credentials, site key (admin only)
+- `GET`/`PUT /api/dashboard/settings` — system prompt, channel credentials, site key (admin only)
 - `GET`/`POST /api/dashboard/team` — team members (adding one is admin only)
+- `GET /api/dashboard/leads` — list, grouped client-side by stage for the board
+- `GET`/`PUT /api/dashboard/leads/:id` — lead details + linked conversations / update stage or fields
+- `POST /api/dashboard/leads/:id/merge` — `{ conversationId }` → attaches an existing conversation to this lead
 - `POST /api/ingest/document` — `{ title, content }` → `{ documentId, chunkCount }` (signed-in business)
 - `POST /api/ingest/crawl` — `{ url, maxPages? }` → starts a background crawl (signed-in business)
 - `GET /health` — liveness check
@@ -147,10 +221,10 @@ CLI equivalents for ingest (useful for scripting): `npm run ingest:crawl -- <sit
 
 ## Notes / next steps
 
-- **WhatsApp credentials are stored in plaintext** in the `businesses` table. Fine for an MVP with a
-  small number of tenants, but a real gap — a database compromise would leak every tenant's WhatsApp
-  access token at once. A production hardening pass should encrypt these columns (e.g. pgcrypto) or
-  move them to a secrets manager.
+- **Channel credentials are stored in plaintext** in the `businesses` table (WhatsApp, Instagram,
+  and Telegram tokens alike). Fine for an MVP with a small number of tenants, but a real gap — a
+  database compromise would leak every tenant's channel credentials at once. A production hardening
+  pass should encrypt these columns (e.g. pgcrypto) or move them to a secrets manager.
 - **No invite emails yet.** An admin adds a teammate directly from Settings with a temporary password
   they share out-of-band — there's no email-sending infrastructure in this project yet.
 - **Re-ingesting** doesn't currently dedupe against previously-crawled pages — running the crawler

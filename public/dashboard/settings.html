@@ -14,6 +14,8 @@
     </div>
     <nav>
       <a href="index.html">Inbox</a>
+      <a href="leads.html">Leads</a>
+      <a href="analytics.html">Analytics</a>
       <a href="settings.html" class="active">Settings</a>
       <button class="icon-btn" id="logout-btn">Log out</button>
     </nav>
@@ -40,32 +42,70 @@
       <button class="btn btn-primary" id="save-prompt-btn">Save</button>
     </section>
 
-    <section class="settings-section" id="whatsapp-section">
-      <h2>WhatsApp connection</h2>
-      <p class="section-desc">
-        Paste your Meta Cloud API credentials for your business's WhatsApp number.
-        Customers who message that number directly will show up in your inbox.
-      </p>
-      <div class="field">
-        <label for="wa-token">Access token</label>
-        <input id="wa-token" type="password" placeholder="Leave blank to keep the current value" autocomplete="off" />
-      </div>
-      <div class="settings-row">
+    <div id="channels-section">
+      <section class="settings-section" id="whatsapp-section">
+        <h2>WhatsApp connection</h2>
+        <p class="section-desc">
+          Paste your Meta Cloud API credentials for your business's WhatsApp number.
+          Customers who message that number directly will show up in your inbox.
+        </p>
         <div class="field">
-          <label for="wa-phone-id">Phone number ID</label>
-          <input id="wa-phone-id" type="text" />
+          <label for="wa-token">Access token</label>
+          <input id="wa-token" type="password" placeholder="Leave blank to keep the current value" autocomplete="off" />
+        </div>
+        <div class="settings-row">
+          <div class="field">
+            <label for="wa-phone-id">Phone number ID</label>
+            <input id="wa-phone-id" type="text" />
+          </div>
+          <div class="field">
+            <label for="wa-template">Template name (optional)</label>
+            <input id="wa-template" type="text" placeholder="For messaging outside the 24h window" />
+          </div>
+        </div>
+        <button class="btn btn-primary" id="save-whatsapp-btn">Save</button>
+        <p class="section-desc" style="margin-top:16px">
+          Webhook URL for your Meta App: <code id="webhook-url"></code> — verify token is whatever your
+          deployment's <code>WHATSAPP_VERIFY_TOKEN</code> is set to.
+        </p>
+      </section>
+
+      <section class="settings-section" id="instagram-section">
+        <h2>Instagram connection</h2>
+        <p class="section-desc">
+          Same Meta Graph API family as WhatsApp — paste the Page Access Token and Page ID for the
+          Facebook Page connected to your Instagram professional account. Also needs Meta business
+          verification, same as WhatsApp; there's no shortcut around that.
+        </p>
+        <div class="field">
+          <label for="ig-token">Page access token</label>
+          <input id="ig-token" type="password" placeholder="Leave blank to keep the current value" autocomplete="off" />
         </div>
         <div class="field">
-          <label for="wa-template">Template name (optional)</label>
-          <input id="wa-template" type="text" placeholder="For messaging outside the 24h window" />
+          <label for="ig-page-id">Page ID</label>
+          <input id="ig-page-id" type="text" />
         </div>
-      </div>
-      <button class="btn btn-primary" id="save-whatsapp-btn">Save</button>
-      <p class="section-desc" style="margin-top:16px">
-        Webhook URL for your Meta App: <code id="webhook-url"></code> — verify token is whatever your
-        deployment's <code>WHATSAPP_VERIFY_TOKEN</code> is set to.
-      </p>
-    </section>
+        <button class="btn btn-primary" id="save-instagram-btn">Save</button>
+        <p class="section-desc" style="margin-top:16px">
+          Webhook URL for your Meta App: <code id="instagram-webhook-url"></code> — same verify token
+          as WhatsApp above.
+        </p>
+      </section>
+
+      <section class="settings-section" id="telegram-section">
+        <h2>Telegram connection</h2>
+        <p class="section-desc">
+          Message <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> on
+          Telegram, create a bot, and paste the token it gives you below. No business verification
+          needed — saving it here also registers the webhook automatically.
+        </p>
+        <div class="field">
+          <label for="tg-token">Bot token</label>
+          <input id="tg-token" type="password" placeholder="Leave blank to keep the current value" autocomplete="off" />
+        </div>
+        <button class="btn btn-primary" id="save-telegram-btn">Save &amp; connect</button>
+      </section>
+    </div>
 
     <section class="settings-section">
       <h2>Feed it your content</h2>
@@ -108,6 +148,16 @@
       </div>
     </section>
 
+    <section class="settings-section">
+      <h2>Notifications</h2>
+      <p class="section-desc">
+        Get a browser notification the moment a conversation needs a person — even if this tab
+        isn't open. You'll also get an email at your account's address, if the business has email
+        configured.
+      </p>
+      <button class="btn btn-primary" id="enable-notifications-btn">Enable notifications on this device</button>
+    </section>
+
   </div>
 
   <div class="toast" id="toast"></div>
@@ -142,8 +192,8 @@
       var data = await api("/api/auth/me");
       document.getElementById("business-name").textContent = data.business ? data.business.name : "Settings";
       if (data.role !== "admin") {
-        document.getElementById("whatsapp-section").innerHTML =
-          "<h2>WhatsApp connection</h2><p class=\"section-desc\">Ask an admin on your team to connect WhatsApp.</p>";
+        document.getElementById("channels-section").innerHTML =
+          '<section class="settings-section"><h2>Channels</h2><p class="section-desc">Ask an admin on your team to connect WhatsApp, Instagram, or Telegram.</p></section>';
       } else {
         document.getElementById("add-team-form").style.display = "block";
       }
@@ -156,9 +206,11 @@
         siteKey = data.business.siteKey;
         document.getElementById("embed-snippet").textContent = snippetFor(siteKey);
         document.getElementById("webhook-url").textContent = location.origin + "/api/webhooks/whatsapp";
+        document.getElementById("instagram-webhook-url").textContent = location.origin + "/api/webhooks/instagram";
         document.getElementById("system-prompt").value = data.business.systemPrompt || "";
         document.getElementById("wa-phone-id").value = data.business.whatsappPhoneNumberId || "";
         document.getElementById("wa-template").value = data.business.whatsappTemplateName || "";
+        document.getElementById("ig-page-id").value = data.business.instagramPageId || "";
       } catch (err) {
         // Non-admin: settings are hidden, snippet/site key just won't render — that's fine.
         document.getElementById("embed-snippet").textContent = "Ask an admin for your embed snippet.";
@@ -207,6 +259,63 @@
         await api("/api/dashboard/settings", { method: "PUT", body: JSON.stringify(body) });
         document.getElementById("wa-token").value = "";
         toast("Saved");
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+
+    document.getElementById("save-instagram-btn").addEventListener("click", async function () {
+      try {
+        var body = { instagramPageId: document.getElementById("ig-page-id").value };
+        var token = document.getElementById("ig-token").value;
+        if (token) body.instagramToken = token;
+        await api("/api/dashboard/settings", { method: "PUT", body: JSON.stringify(body) });
+        document.getElementById("ig-token").value = "";
+        toast("Saved");
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+
+    document.getElementById("save-telegram-btn").addEventListener("click", async function () {
+      var token = document.getElementById("tg-token").value;
+      if (!token) return toast("Paste a bot token first");
+      try {
+        await api("/api/dashboard/settings", { method: "PUT", body: JSON.stringify({ telegramBotToken: token }) });
+        document.getElementById("tg-token").value = "";
+        toast("Connected");
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+
+    function urlBase64ToUint8Array(base64String) {
+      var padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+      var base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+      var rawData = window.atob(base64);
+      var output = new Uint8Array(rawData.length);
+      for (var i = 0; i < rawData.length; i++) output[i] = rawData.charCodeAt(i);
+      return output;
+    }
+
+    document.getElementById("enable-notifications-btn").addEventListener("click", async function () {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        return toast("Push notifications aren't supported in this browser");
+      }
+      try {
+        var keyData = await api("/api/dashboard/push/public-key");
+        if (!keyData.publicKey) return toast("Push isn't configured on the server yet");
+
+        var registration = await navigator.serviceWorker.register("/dashboard/sw.js");
+        var permission = await Notification.requestPermission();
+        if (permission !== "granted") return toast("Notifications permission denied");
+
+        var subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(keyData.publicKey),
+        });
+        await api("/api/dashboard/push/subscribe", { method: "POST", body: JSON.stringify(subscription.toJSON()) });
+        toast("Notifications enabled on this device");
       } catch (err) {
         toast(err.message);
       }
