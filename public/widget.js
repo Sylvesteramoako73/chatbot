@@ -72,8 +72,10 @@
   var userInteracted = false;
 
   toggle.addEventListener("click", function () {
+    var isFirstOpen = !userInteracted && !handoffActive && localStorage.getItem("wcb_greeted_" + sessionId) !== "1";
     userInteracted = true;
     panel.classList.toggle("open");
+    if (isFirstOpen) showGreeting();
   });
 
   var messagesEl = panel.querySelector("#wcb-messages");
@@ -222,13 +224,19 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  function maybeShowGreeting() {
-    if (userInteracted || handoffActive) return;
-    userInteracted = true;
+  // Shared by the idle-timer greeting below and the toggle button's first-ever click — whichever
+  // happens first shows the welcome + name prompt; "wcb_greeted_" makes sure it only happens once.
+  function showGreeting() {
     localStorage.setItem("wcb_greeted_" + sessionId, "1");
-    panel.classList.add("open");
     addMessage("bot", "Hi there! 👋 Looking for something specific? Happy to help — and how should I address you?");
     showNameForm();
+  }
+
+  function maybeShowGreeting() {
+    if (userInteracted || handoffActive || localStorage.getItem("wcb_greeted_" + sessionId) === "1") return;
+    userInteracted = true;
+    panel.classList.add("open");
+    showGreeting();
   }
 
   if (localStorage.getItem("wcb_greeted_" + sessionId) !== "1" && !handoffActive) {

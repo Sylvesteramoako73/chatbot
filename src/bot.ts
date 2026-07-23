@@ -1,6 +1,8 @@
 import { Business } from "./businesses";
 import { streamChatResponse, NEEDS_HUMAN_MARKER } from "./chat";
-import { getOrCreateConversation, recordMessage, requestHuman, Channel, LeadHint } from "./conversations";
+import { getOrCreateConversation, recordMessage, requestHuman, getMessages, Channel, LeadHint } from "./conversations";
+
+const HISTORY_LIMIT = 20;
 
 /**
  * Shared inbound-message handling for every non-widget channel (WhatsApp, Telegram, Instagram —
@@ -18,11 +20,19 @@ export async function handleInboundMessage(
   send: (replyText: string) => Promise<string | null>
 ): Promise<void> {
   const conversation = await getOrCreateConversation(business.id, channel, externalId, leadHint);
+  // Fetch history before recording this turn's message so it isn't duplicated — the model needs
+  // to see its own prior "want me to connect you?" offer to recognize a "yes" as confirmation.
+  const priorMessages = await getMessages(conversation.id);
+  const history = priorMessages.slice(-HISTORY_LIMIT).map((m) => ({
+    role: (m.role === "customer" ? "user" : "assistant") as "user" | "assistant",
+    content: m.content,
+  }));
+
   await recordMessage(conversation, "customer", text);
   if (conversation.mode !== "bot") return; // claimed by a rep — they'll see it live in the dashboard
 
   let full = "";
-  for await (const token of streamChatResponse(business.id, business.name, business.systemPrompt, text, [])) {
+  for await (const token of streamChatResponse(business.id, business.name, business.systemPrompt, text, history)) {
     full += token;
   }
 
