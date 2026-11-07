@@ -128,6 +128,32 @@
       <button class="btn btn-secondary" id="doc-btn">Add document</button>
     </section>
 
+    <section class="settings-section" id="lead-alerts-section">
+      <h2>Lead alerts</h2>
+      <p class="section-desc">When the bot collects someone's name and phone number or email, your sales team gets an
+        SMS, email and browser notification straight away, and the client gets a short confirmation. SMS is sent through
+        mNotify (set <code>MNOTIFY_API_KEY</code> on the server).</p>
+      <div class="field">
+        <label for="alert-phones">Sales team phone numbers for SMS alerts</label>
+        <input id="alert-phones" type="text" placeholder="e.g. 0244123456, 0201234567" />
+      </div>
+      <div class="field">
+        <label for="alert-emails">Sales team emails (leave blank to email everyone on the team)</label>
+        <input id="alert-emails" type="text" placeholder="e.g. sales@yourcompany.com, manager@yourcompany.com" />
+      </div>
+      <div class="field">
+        <label for="sms-sender-id">SMS sender ID (registered with mNotify, max 11 characters)</label>
+        <input id="sms-sender-id" type="text" maxlength="11" placeholder="e.g. SIGL" />
+      </div>
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:normal">
+          <input id="client-confirmation" type="checkbox" style="width:auto" checked />
+          Send the client a confirmation SMS and email
+        </label>
+      </div>
+      <button class="btn btn-primary" id="save-alerts-btn">Save</button>
+    </section>
+
     <section class="settings-section">
       <h2>Team</h2>
       <div id="team-list"></div>
@@ -194,6 +220,7 @@
       if (data.role !== "admin") {
         document.getElementById("channels-section").innerHTML =
           '<section class="settings-section"><h2>Channels</h2><p class="section-desc">Ask an admin on your team to connect WhatsApp, Instagram, or Telegram.</p></section>';
+        document.getElementById("lead-alerts-section").style.display = "none";
       } else {
         document.getElementById("add-team-form").style.display = "block";
       }
@@ -211,6 +238,10 @@
         document.getElementById("wa-phone-id").value = data.business.whatsappPhoneNumberId || "";
         document.getElementById("wa-template").value = data.business.whatsappTemplateName || "";
         document.getElementById("ig-page-id").value = data.business.instagramPageId || "";
+        document.getElementById("alert-phones").value = data.business.alertPhones || "";
+        document.getElementById("alert-emails").value = data.business.alertEmails || "";
+        document.getElementById("sms-sender-id").value = data.business.smsSenderId || "";
+        document.getElementById("client-confirmation").checked = data.business.clientConfirmationEnabled !== false;
       } catch (err) {
         // Non-admin: settings are hidden, snippet/site key just won't render — that's fine.
         document.getElementById("embed-snippet").textContent = "Ask an admin for your embed snippet.";
@@ -271,6 +302,23 @@
         if (token) body.instagramToken = token;
         await api("/api/dashboard/settings", { method: "PUT", body: JSON.stringify(body) });
         document.getElementById("ig-token").value = "";
+        toast("Saved");
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+
+    document.getElementById("save-alerts-btn").addEventListener("click", async function () {
+      try {
+        await api("/api/dashboard/settings", {
+          method: "PUT",
+          body: JSON.stringify({
+            alertPhones: document.getElementById("alert-phones").value.trim(),
+            alertEmails: document.getElementById("alert-emails").value.trim(),
+            smsSenderId: document.getElementById("sms-sender-id").value.trim(),
+            clientConfirmationEnabled: document.getElementById("client-confirmation").checked,
+          }),
+        });
         toast("Saved");
       } catch (err) {
         toast(err.message);

@@ -18,6 +18,66 @@ function defaultTone(businessName: string): string {
 // customer ever sees it, in both the streamed widget response and the WhatsApp reply.
 export const NEEDS_HUMAN_MARKER = "[[NEEDS_HUMAN]]";
 
+// Once the visitor has shared their name plus a phone number or email, the bot appends this tag
+// with whatever it has collected, e.g. [[LEAD {"name":"Ama","phone":"0244123456"}]]. Like the
+// handoff marker it's stripped before the customer sees anything; the server uses it to fill in
+// the lead and fire the sales/client alerts (see leadAlerts.ts).
+export const LEAD_MARKER_PREFIX = "[[LEAD";
+const LEAD_MARKER_RE = /\[\[LEAD\s*(\{[\s\S]*?\})\s*\]\]/;
+
+export interface CapturedLead {
+  name?: string;
+  phone?: string;
+  email?: string;
+  interest?: string;
+  location?: string;
+  preferredTime?: string;
+}
+
+export interface ParsedBotReply {
+  visible: string;
+  needsHuman: boolean;
+  lead: CapturedLead | null;
+}
+
+function cleanField(value: unknown, max = 200): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, max) : undefined;
+}
+
+/** Pulls both markers out of a finished bot reply: the customer-facing text plus what they signal. */
+export function parseBotReply(full: string): ParsedBotReply {
+  let visible = full;
+  let lead: CapturedLead | null = null;
+
+  const match = visible.match(LEAD_MARKER_RE);
+  if (match) {
+    visible = visible.replace(match[0], "");
+    try {
+      const raw = JSON.parse(match[1]) as Record<string, unknown>;
+      lead = {
+        name: cleanField(raw.name, 120),
+        phone: cleanField(raw.phone, 40),
+        email: cleanField(raw.email, 200),
+        interest: cleanField(raw.interest),
+        location: cleanField(raw.location),
+        preferredTime: cleanField(raw.preferred_time ?? raw.preferredTime),
+      };
+    } catch {
+      lead = null; // malformed JSON from the model — still strip the tag, just don't act on it
+    }
+  }
+  // A truncated tag (stream cut off mid-tag) must never leak to the customer either.
+  const dangling = visible.indexOf(LEAD_MARKER_PREFIX);
+  if (dangling !== -1) visible = visible.slice(0, dangling);
+
+  const needsHuman = visible.includes(NEEDS_HUMAN_MARKER);
+  if (needsHuman) visible = visible.replace(NEEDS_HUMAN_MARKER, "");
+
+  return { visible: visible.replace(/\s+$/, ""), needsHuman, lead };
+}
+
 function buildSystemPrompt(businessName: string, persona: string | null, notesBlock: string): string {
   return `You are chatting directly with a visitor on ${businessName}'s own website or messaging channel. You ARE ${businessName}'s assistant — speak as ${businessName} itself, in first person plural ("we", "our", "us"), the way a staff member would. Never describe ${businessName} the way an outside observer or a Wikipedia article would (never say "${businessName} is a..." — say "We're a...").
 
@@ -49,6 +109,19 @@ it: ${NEEDS_HUMAN_MARKER}
 Never send the token by itself with no confirmation line before it, and never send it as a
 routine courtesy or before they've agreed. If they say no or don't need that, respect it and keep
 helping normally without the token.
+
+Capturing contact details: as soon as the visitor has given you their name AND at least one way to
+reach them (a phone/WhatsApp number or an email address) — in this message or earlier in the
+conversation — reply normally (thank them and confirm the team will be in touch), then add this
+tag at the very end of your reply, on its own line, with only details they actually gave you:
+${LEAD_MARKER_PREFIX} {"name":"...","phone":"...","email":"...","interest":"...","location":"...","preferred_time":"..."}]]
+Use "interest" for the project/product/service they want, "location" for where they are (e.g. a
+city or "abroad, UK"), and "preferred_time" for when they'd like to be contacted. Leave out any
+field you don't know — never guess or invent a value. Send the tag only once per conversation,
+unless they later give a new or corrected phone number or email, then send it again with the
+updated details. Never mention the tag, never put anything after it, and never ask for details
+just to fill the tag — only when it's natural (they want pricing, a call, a visit, or a follow up).
+If both tags apply in the same reply, put ${NEEDS_HUMAN_MARKER} last.
 
 <reference-notes>
 ${notesBlock}

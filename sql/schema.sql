@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS businesses (
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS telegram_bot_token TEXT UNIQUE;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS instagram_page_id TEXT UNIQUE;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS instagram_token TEXT;
+-- Lead alerts: who on the sales team hears about a new lead (comma-separated phones/emails), the
+-- registered SMS sender ID, and whether the client gets an automatic confirmation SMS/email.
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS alert_phones TEXT;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS alert_emails TEXT;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS sms_sender_id TEXT;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS client_confirmation_enabled BOOLEAN NOT NULL DEFAULT true;
 
 CREATE TABLE IF NOT EXISTS team_members (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -81,6 +87,9 @@ CREATE TABLE IF NOT EXISTS leads (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS leads_business_id_idx ON leads (business_id);
+-- Set the first time the sales team and client are notified about this lead, so a bot that repeats
+-- the lead tag later in the same conversation never triggers a second round of SMS/email.
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS alerted_at TIMESTAMPTZ;
 
 -- One row per customer thread, whichever channel it started on. external_id is the widget's
 -- sessionId for channel='widget', the customer's WhatsApp number for channel='whatsapp', the chat

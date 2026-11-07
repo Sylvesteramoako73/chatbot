@@ -1,5 +1,6 @@
 import { Business } from "./businesses";
-import { streamChatResponse, NEEDS_HUMAN_MARKER } from "./chat";
+import { streamChatResponse, parseBotReply } from "./chat";
+import { handleCapturedLead } from "./leadAlerts";
 import { getOrCreateConversation, recordMessage, requestHuman, getMessages, Channel, LeadHint } from "./conversations";
 
 const HISTORY_LIMIT = 20;
@@ -36,10 +37,14 @@ export async function handleInboundMessage(
     full += token;
   }
 
-  const needsHuman = full.includes(NEEDS_HUMAN_MARKER);
-  const visible = needsHuman ? full.replace(NEEDS_HUMAN_MARKER, "").replace(/\s+$/, "") : full;
+  const { visible, needsHuman, lead } = parseBotReply(full);
 
   const messageId = await send(visible);
   await recordMessage(conversation, "bot", visible, messageId);
+  if (lead) {
+    // WhatsApp's sender number is the customer's real phone even if they didn't type it in chat.
+    if (!lead.phone && channel === "whatsapp") lead.phone = externalId;
+    void handleCapturedLead(business, conversation, lead);
+  }
   if (needsHuman) await requestHuman(conversation.id);
 }

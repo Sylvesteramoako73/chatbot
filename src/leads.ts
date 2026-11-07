@@ -159,3 +159,59 @@ export async function getLeadStageCounts(businessId: string): Promise<LeadStageC
 
   return { total, byStage };
 }
+
+export interface CapturedLeadDetails {
+  name?: string;
+  phone?: string;
+  email?: string;
+  interest?: string;
+  location?: string;
+  preferredTime?: string;
+}
+
+/** One line for the lead's notes, e.g. "Interested in: Serenity Estate | Location: UK | Preferred time: after 5pm". */
+export function describeLeadExtras(details: CapturedLeadDetails): string | null {
+  const parts = [
+    details.interest && `Interested in: ${details.interest}`,
+    details.location && `Location: ${details.location}`,
+    details.preferredTime && `Preferred time: ${details.preferredTime}`,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" | ") : null;
+}
+
+/**
+ * Applies details the bot captured mid-conversation to the lead. Contact fields from the customer's
+ * own words win over whatever was there (they may have corrected a number); the extras are appended
+ * to the notes rather than replacing anything a rep already wrote.
+ */
+export async function applyCapturedLeadDetails(leadId: string, details: CapturedLeadDetails): Promise<Lead> {
+  const extras = describeLeadExtras(details);
+  const result = await pool.query<LeadRow>(
+    `UPDATE leads SET
+       name = COALESCE($2, name),
+       phone = COALESCE($3, phone),
+       email = COALESCE($4, email),
+       notes = CASE
+         WHEN $5::text IS NULL THEN notes
+         WHEN notes IS NULL OR notes = '' THEN $5
+         WHEN position($5 in notes) > 0 THEN notes
+         ELSE notes || E'\n' || $5
+       END,
+       updated_at = now()
+     WHERE id = $1
+     RETURNING ${COLUMNS}`,
+    [leadId, details.name ?? null, details.phone ?? null, details.email ?? null, extras]
+  );
+  return toLead(result.rows[0]);
+}
+
+/**
+ * Atomically claims the "we've alerted the team about this lead" flag. Returns true only for the
+ * first caller, so a bot that repeats the lead tag later never sends a second round of SMS/email.
+ */
+export async function claimLeadAlert(leadId: string): Promise<boolean> {
+  const result = await pool.query("UPDATE leads SET alerted_at = now() WHERE id = $1 AND alerted_at IS NULL RETURNING id", [
+    leadId,
+  ]);
+  return (result.rowCount ?? 0) > 0;
+}
