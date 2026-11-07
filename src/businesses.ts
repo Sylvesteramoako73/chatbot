@@ -13,6 +13,10 @@ export interface Business {
   telegramBotToken: string | null;
   instagramPageId: string | null;
   instagramToken: string | null;
+  alertPhones: string | null;
+  alertEmails: string | null;
+  smsSenderId: string | null;
+  clientConfirmationEnabled: boolean;
 }
 
 interface BusinessRow {
@@ -27,11 +31,16 @@ interface BusinessRow {
   telegram_bot_token: string | null;
   instagram_page_id: string | null;
   instagram_token: string | null;
+  alert_phones: string | null;
+  alert_emails: string | null;
+  sms_sender_id: string | null;
+  client_confirmation_enabled: boolean;
 }
 
 const COLUMNS =
   "id, name, site_key, allowed_origin, system_prompt, whatsapp_token, whatsapp_phone_number_id, " +
-  "whatsapp_template_name, telegram_bot_token, instagram_page_id, instagram_token";
+  "whatsapp_template_name, telegram_bot_token, instagram_page_id, instagram_token, " +
+  "alert_phones, alert_emails, sms_sender_id, client_confirmation_enabled";
 
 function toBusiness(row: BusinessRow): Business {
   return {
@@ -46,6 +55,10 @@ function toBusiness(row: BusinessRow): Business {
     telegramBotToken: row.telegram_bot_token,
     instagramPageId: row.instagram_page_id,
     instagramToken: row.instagram_token,
+    alertPhones: row.alert_phones,
+    alertEmails: row.alert_emails,
+    smsSenderId: row.sms_sender_id,
+    clientConfirmationEnabled: row.client_confirmation_enabled ?? true,
   };
 }
 
@@ -95,6 +108,10 @@ export interface BusinessSettingsUpdate {
   telegramBotToken?: string | null;
   instagramPageId?: string | null;
   instagramToken?: string | null;
+  alertPhones?: string | null;
+  alertEmails?: string | null;
+  smsSenderId?: string | null;
+  clientConfirmationEnabled?: boolean | null;
 }
 
 export async function updateBusinessSettings(id: string, updates: BusinessSettingsUpdate): Promise<Business> {
@@ -107,7 +124,11 @@ export async function updateBusinessSettings(id: string, updates: BusinessSettin
        whatsapp_template_name = COALESCE($6, whatsapp_template_name),
        telegram_bot_token = COALESCE($7, telegram_bot_token),
        instagram_page_id = COALESCE($8, instagram_page_id),
-       instagram_token = COALESCE($9, instagram_token)
+       instagram_token = COALESCE($9, instagram_token),
+       alert_phones = COALESCE($10, alert_phones),
+       alert_emails = COALESCE($11, alert_emails),
+       sms_sender_id = COALESCE($12, sms_sender_id),
+       client_confirmation_enabled = COALESCE($13, client_confirmation_enabled)
      WHERE id = $1
      RETURNING ${COLUMNS}`,
     [
@@ -120,6 +141,10 @@ export async function updateBusinessSettings(id: string, updates: BusinessSettin
       updates.telegramBotToken,
       updates.instagramPageId,
       updates.instagramToken,
+      updates.alertPhones,
+      updates.alertEmails,
+      updates.smsSenderId,
+      updates.clientConfirmationEnabled,
     ]
   );
   return toBusiness(result.rows[0]);

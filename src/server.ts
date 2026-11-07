@@ -2,7 +2,8 @@ import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import path from "path";
-import { streamChatResponse, ChatMessage, NEEDS_HUMAN_MARKER } from "./chat";
+import { streamChatResponse, ChatMessage, parseBotReply } from "./chat";
+import { handleCapturedLead } from "./leadAlerts";
 import { ingestDocument, ingestWebsite } from "./ingest";
 import {
   createSessionMiddleware,
@@ -85,11 +86,17 @@ app.get("/api/auth/me", requireAuth, async (req: Request, res: Response) => {
 // sent, so origin-based gating can't happen at the cors() layer here).
 // ---------------------------------------------------------------------------
 
-// Held back from the live stream so we can detect (and strip) NEEDS_HUMAN_MARKER (15 chars) before
-// it ever reaches the customer. Kept small — for short replies, a big reserve here would withhold
-// a large fraction of the message until the very end, making fast responses look like they arrived
-// in one dump instead of streaming.
-const MARKER_TAIL_BUFFER = 24;
+// Bot replies can end with hidden tags ([[NEEDS_HUMAN]] or [[LEAD {...}]]) that must never reach
+// the customer. Text streams out live until a "[[" appears; from there on everything is held back,
+// and once the reply is complete parseBotReply() decides what (if anything) is still visible. A lone
+// trailing "[" and trailing whitespace are also held, since either could be the start of a tag.
+function streamableLength(pending: string): number {
+  const tagStart = pending.indexOf("[[");
+  let end = tagStart === -1 ? pending.length : tagStart;
+  if (tagStart === -1 && pending.endsWith("[")) end -= 1;
+  while (end > 0 && /\s/.test(pending[end - 1])) end -= 1;
+  return end;
+}
 
 async function runBotReplyForWidget(
   conversation: Conversation,
@@ -99,23 +106,27 @@ async function runBotReplyForWidget(
   res: Response
 ): Promise<void> {
   let full = "";
-  let tail = "";
+  let written = "";
+  let holding = false;
   for await (const token of streamChatResponse(conversation.businessId, business?.name ?? "the business", business?.systemPrompt ?? null, message, history)) {
     full += token;
-    tail += token;
-    if (tail.length > MARKER_TAIL_BUFFER) {
-      const flushLength = tail.length - MARKER_TAIL_BUFFER;
-      res.write(tail.slice(0, flushLength));
-      tail = tail.slice(flushLength);
+    if (holding) continue;
+    const pending = full.slice(written.length);
+    const flushLength = streamableLength(pending);
+    if (flushLength > 0) {
+      res.write(pending.slice(0, flushLength));
+      written += pending.slice(0, flushLength);
     }
+    if (pending.includes("[[")) holding = true;
   }
 
-  const needsHuman = full.includes(NEEDS_HUMAN_MARKER);
-  res.write(needsHuman ? tail.replace(NEEDS_HUMAN_MARKER, "").replace(/\s+$/, "") : tail);
+  const { visible, needsHuman, lead } = parseBotReply(full);
+  if (visible.startsWith(written)) res.write(visible.slice(written.length));
   res.end();
 
-  const visibleFull = needsHuman ? full.replace(NEEDS_HUMAN_MARKER, "").replace(/\s+$/, "") : full;
-  await recordMessage(conversation, "bot", visibleFull);
+  await recordMessage(conversation, "bot", visible);
+
+  if (lead && business) void handleCapturedLead(business, conversation, lead);
 
   if (needsHuman) {
     await requestHuman(conversation.id);
@@ -495,6 +506,10 @@ app.put("/api/dashboard/settings", requireAuth, requireAdmin, async (req: Reques
     telegramBotToken,
     instagramPageId,
     instagramToken,
+    alertPhones,
+    alertEmails,
+    smsSenderId,
+    clientConfirmationEnabled,
   } = req.body;
 
   const business = await updateBusinessSettings(req.session.businessId!, {
@@ -506,6 +521,10 @@ app.put("/api/dashboard/settings", requireAuth, requireAdmin, async (req: Reques
     telegramBotToken,
     instagramPageId,
     instagramToken,
+    alertPhones,
+    alertEmails,
+    smsSenderId,
+    clientConfirmationEnabled: typeof clientConfirmationEnabled === "boolean" ? clientConfirmationEnabled : undefined,
   });
 
   // Telegram has no separate "register this webhook in a dashboard" step like WhatsApp/Instagram —

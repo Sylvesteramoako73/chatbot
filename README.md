@@ -193,6 +193,23 @@ limitation, not something silently papered over.
 Lead stage and conversation `mode`/claim status are intentionally independent — moving a lead to
 Won/Lost does not auto-close its conversations; reps close those the same way they already do.
 
+## Lead alerts (SMS, email, push)
+
+When the bot has a visitor's name plus a phone number or email, it appends a hidden
+`[[LEAD {...}]]` tag to its reply (stripped before the customer sees it, on every channel). The
+server then fills in the lead's name, phone, email and notes (interest, location, preferred time),
+and the first time a lead is complete it:
+
+- texts the sales team (Settings > Lead alerts > phone numbers) via mNotify,
+- emails the sales team (the listed emails, or everyone on the team if blank) via Resend,
+- sends a browser push to every team member with notifications enabled,
+- if "Send the client a confirmation" is on, texts and emails the client a short confirmation.
+
+Alerts fire once per lead (`leads.alerted_at`). SMS needs `MNOTIFY_API_KEY` and a sender ID
+registered in mNotify (set per business in Settings, or `MNOTIFY_SENDER_ID` as a default). Without
+them SMS is skipped and email/push still work. Local Ghana numbers like `0244123456` are converted
+to `233244123456` automatically.
+
 ## API
 
 - `POST /api/chat` — `{ siteKey, sessionId, message, history? }` → streamed plain-text bot response,
