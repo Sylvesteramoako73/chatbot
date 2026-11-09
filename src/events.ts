@@ -36,6 +36,23 @@ export function subscribeToConversation(
   return () => emitter.off(key, onEvent);
 }
 
+// A widget opens its live stream on page load, before the visitor has said anything. Instead of
+// creating an empty conversation just to have something to listen on, the stream waits here and is
+// told the conversation id once the visitor's first message (or name) actually creates it.
+export function announceWidgetConversation(businessId: string, sessionId: string, conversationId: string): void {
+  emitter.emit(`widget-new:${businessId}:${sessionId}`, conversationId);
+}
+
+export function onWidgetConversationCreated(
+  businessId: string,
+  sessionId: string,
+  onCreated: (conversationId: string) => void
+): () => void {
+  const key = `widget-new:${businessId}:${sessionId}`;
+  emitter.on(key, onCreated);
+  return () => emitter.off(key, onCreated);
+}
+
 export function publishToBusiness(businessId: string, event: DashboardEvent): void {
   emitter.emit(`biz:${businessId}`, event);
 }

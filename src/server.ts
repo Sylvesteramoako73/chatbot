@@ -25,6 +25,7 @@ import {
 import {
   Conversation,
   getOrCreateConversation,
+  findConversation,
   getConversationById,
   recordMessage,
   getMessages,
@@ -37,7 +38,7 @@ import {
   requestHuman,
   relayReplyToWidget,
 } from "./conversations";
-import { subscribeToConversation, subscribeToBusiness } from "./events";
+import { subscribeToConversation, subscribeToBusiness, onWidgetConversationCreated } from "./events";
 import { sendWhatsAppText } from "./whatsapp";
 import { sendTelegramMessage, setTelegramWebhook } from "./telegram";
 import { sendInstagramMessage } from "./instagram";
@@ -218,20 +219,31 @@ app.get("/api/chat/stream", (req: Request, res: Response) => {
   void (async () => {
     const business = await getBusinessBySiteKey(siteKey);
     if (!business) return res.status(404).end();
-    const conversation = await getOrCreateConversation(business.id, "widget", sessionId);
+    // Only look the conversation up: a visitor who just loads a page must not create an empty chat
+    // (and a blank lead). If they start talking later, we're told the new id and attach then.
+    const existing = await findConversation(business.id, "widget", sessionId);
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    const unsubscribe = subscribeToConversation(conversation.id, (event) => {
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
-    });
+    const forward = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+    let unsubscribe: () => void = () => {};
+    let stopWaiting: () => void = () => {};
+    if (existing) {
+      unsubscribe = subscribeToConversation(existing.id, forward);
+    } else {
+      stopWaiting = onWidgetConversationCreated(business.id, sessionId, (conversationId) => {
+        stopWaiting();
+        unsubscribe = subscribeToConversation(conversationId, forward);
+      });
+    }
     const heartbeat = setInterval(() => res.write(": ping\n\n"), 30000);
 
     req.on("close", () => {
       clearInterval(heartbeat);
+      stopWaiting();
       unsubscribe();
     });
   })();

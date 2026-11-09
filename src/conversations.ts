@@ -1,5 +1,5 @@
 import { pool } from "./db";
-import { publishToConversation, publishToBusiness } from "./events";
+import { publishToConversation, publishToBusiness, announceWidgetConversation } from "./events";
 import { createLead, markLeadContactedIfNew } from "./leads";
 import { notifyTeamOfEscalation } from "./notifications";
 
@@ -69,7 +69,17 @@ export async function getOrCreateConversation(
   );
   const conversation = toConversation(inserted.rows[0]);
   publishToBusiness(businessId, { type: "new_conversation", conversationId: conversation.id, channel, externalId });
+  if (channel === "widget") announceWidgetConversation(businessId, externalId, conversation.id);
   return conversation;
+}
+
+/** Looks up a conversation without creating one (used by the widget's live stream on page load). */
+export async function findConversation(businessId: string, channel: Channel, externalId: string): Promise<Conversation | null> {
+  const result = await pool.query<ConversationRow>(
+    `SELECT ${COLUMNS} FROM conversations WHERE business_id = $1 AND channel = $2 AND external_id = $3`,
+    [businessId, channel, externalId]
+  );
+  return result.rows.length ? toConversation(result.rows[0]) : null;
 }
 
 export async function getConversationById(id: string): Promise<Conversation | null> {
@@ -138,7 +148,9 @@ export async function listConversations(
   filter: ConversationFilter,
   teamMemberId: string
 ): Promise<ConversationSummary[]> {
-  const conditions = ["c.business_id = $1"];
+  // Chats with no messages at all (e.g. created by an older widget just for loading a page) are noise,
+  // unless the visitor asked for a person before typing anything.
+  const conditions = ["c.business_id = $1", "(c.mode = 'human' OR EXISTS (SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id))"];
   const params: unknown[] = [businessId];
 
   if (filter === "unclaimed") {
