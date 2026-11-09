@@ -205,7 +205,15 @@ and the first time a lead is complete it:
 - sends a browser push to every team member with notifications enabled,
 - if "Send the client a confirmation" is on, texts and emails the client a short confirmation.
 
-Alerts fire once per lead (`leads.alerted_at`). SMS needs `MNOTIFY_API_KEY` and a sender ID
+When the sales team is alerted:
+
+- the first time a lead is complete;
+- for a returning client, when they ask about a different project, give a different phone number
+  or email, or come back more than 7 days after their last alert (marked "Returning lead");
+- never more than once every 2 hours per lead, so a chat repeating its details can't spam anyone.
+
+The client confirmation goes out only for a first contact or a new project, at most once a day.
+Each enquiry is added to the lead's notes as a dated line, so the team can see the history. SMS needs `MNOTIFY_API_KEY` and a sender ID
 registered in mNotify (set per business in Settings, or `MNOTIFY_SENDER_ID` as a default). Without
 them SMS is skipped and email/push still work. Local Ghana numbers like `0244123456` are converted
 to `233244123456` automatically.

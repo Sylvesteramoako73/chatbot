@@ -165,14 +165,16 @@ export interface CapturedLeadDetails {
   phone?: string;
   email?: string;
   interest?: string;
+  unit?: string;
   location?: string;
   preferredTime?: string;
 }
 
-/** One line for the lead's notes, e.g. "Interested in: Serenity Estate | Location: UK | Preferred time: after 5pm". */
+/** One dated line for the lead's notes, e.g. "2026-11-09: Interested in: Serenity Estate | Unit: 3 bedroom villa". */
 export function describeLeadExtras(details: CapturedLeadDetails): string | null {
   const parts = [
     details.interest && `Interested in: ${details.interest}`,
+    details.unit && `Unit: ${details.unit}`,
     details.location && `Location: ${details.location}`,
     details.preferredTime && `Preferred time: ${details.preferredTime}`,
   ].filter(Boolean);
@@ -181,11 +183,13 @@ export function describeLeadExtras(details: CapturedLeadDetails): string | null 
 
 /**
  * Applies details the bot captured mid-conversation to the lead. Contact fields from the customer's
- * own words win over whatever was there (they may have corrected a number); the extras are appended
- * to the notes rather than replacing anything a rep already wrote.
+ * own words win over whatever was there (they may have corrected a number). Each new enquiry is added
+ * to the notes as a dated line, so the team sees the client's history; a repeat of an enquiry that's
+ * already recorded isn't added again.
  */
-export async function applyCapturedLeadDetails(leadId: string, details: CapturedLeadDetails): Promise<Lead> {
+export async function applyCapturedLeadDetails(leadId: string, details: CapturedLeadDetails, today = new Date()): Promise<Lead> {
   const extras = describeLeadExtras(details);
+  const entry = extras ? `${today.toISOString().slice(0, 10)}: ${extras}` : null;
   const result = await pool.query<LeadRow>(
     `UPDATE leads SET
        name = COALESCE($2, name),
@@ -193,25 +197,72 @@ export async function applyCapturedLeadDetails(leadId: string, details: Captured
        email = COALESCE($4, email),
        notes = CASE
          WHEN $5::text IS NULL THEN notes
-         WHEN notes IS NULL OR notes = '' THEN $5
-         WHEN position($5 in notes) > 0 THEN notes
-         ELSE notes || E'\n' || $5
+         WHEN position($5 in COALESCE(notes, '')) > 0 THEN notes
+         WHEN notes IS NULL OR notes = '' THEN $6
+         ELSE notes || E'\n' || $6
        END,
        updated_at = now()
      WHERE id = $1
      RETURNING ${COLUMNS}`,
-    [leadId, details.name ?? null, details.phone ?? null, details.email ?? null, extras]
+    [leadId, details.name ?? null, details.phone ?? null, details.email ?? null, extras, entry]
   );
   return toLead(result.rows[0]);
 }
 
+export interface LeadAlertState {
+  alertedAt: Date | null;
+  lastAlertInterest: string | null;
+  lastAlertPhone: string | null;
+  lastAlertEmail: string | null;
+  lastClientConfirmationAt: Date | null;
+}
+
+export async function getLeadAlertState(leadId: string): Promise<LeadAlertState> {
+  const { rows } = await pool.query(
+    `SELECT alerted_at, last_alert_interest, last_alert_phone, last_alert_email, last_client_confirmation_at
+     FROM leads WHERE id = $1`,
+    [leadId]
+  );
+  const r = rows[0] ?? {};
+  return {
+    alertedAt: r.alerted_at ?? null,
+    lastAlertInterest: r.last_alert_interest ?? null,
+    lastAlertPhone: r.last_alert_phone ?? null,
+    lastAlertEmail: r.last_alert_email ?? null,
+    lastClientConfirmationAt: r.last_client_confirmation_at ?? null,
+  };
+}
+
 /**
- * Atomically claims the "we've alerted the team about this lead" flag. Returns true only for the
- * first caller, so a bot that repeats the lead tag later never sends a second round of SMS/email.
+ * Atomically records that the sales team has just been alerted, and what they were told. Only
+ * succeeds if nobody else alerted since `expectedAlertedAt` was read, so two replies landing at once
+ * can never send the same alert twice. Compared at millisecond precision because Postgres keeps
+ * microseconds but the value read back into JavaScript only has milliseconds.
  */
-export async function claimLeadAlert(leadId: string): Promise<boolean> {
-  const result = await pool.query("UPDATE leads SET alerted_at = now() WHERE id = $1 AND alerted_at IS NULL RETURNING id", [
-    leadId,
-  ]);
+export async function claimLeadAlert(
+  leadId: string,
+  expectedAlertedAt: Date | null,
+  snapshot: { interest: string | null; phone: string | null; email: string | null }
+): Promise<boolean> {
+  const result = await pool.query(
+    `UPDATE leads SET alerted_at = now(),
+       last_alert_interest = COALESCE($3, last_alert_interest),
+       last_alert_phone = $4,
+       last_alert_email = $5
+     WHERE id = $1 AND date_trunc('milliseconds', alerted_at) IS NOT DISTINCT FROM $2::timestamptz
+     RETURNING id`,
+    [leadId, expectedAlertedAt, snapshot.interest, snapshot.phone, snapshot.email]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/** Same idea for the client confirmation, which is limited to one a day. */
+export async function claimClientConfirmation(leadId: string, expectedAt: Date | null): Promise<boolean> {
+  const result = await pool.query(
+    `UPDATE leads SET last_client_confirmation_at = now()
+     WHERE id = $1 AND date_trunc('milliseconds', last_client_confirmation_at) IS NOT DISTINCT FROM $2::timestamptz
+     RETURNING id`,
+    [leadId, expectedAt]
+  );
   return (result.rowCount ?? 0) > 0;
 }

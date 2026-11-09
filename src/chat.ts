@@ -30,6 +30,7 @@ export interface CapturedLead {
   phone?: string;
   email?: string;
   interest?: string;
+  unit?: string;
   location?: string;
   preferredTime?: string;
 }
@@ -61,6 +62,7 @@ export function parseBotReply(full: string): ParsedBotReply {
         phone: cleanField(raw.phone, 40),
         email: cleanField(raw.email, 200),
         interest: cleanField(raw.interest),
+        unit: cleanField(raw.unit),
         location: cleanField(raw.location),
         preferredTime: cleanField(raw.preferred_time ?? raw.preferredTime),
       };
@@ -114,12 +116,13 @@ Capturing contact details: as soon as the visitor has given you their name AND a
 reach them (a phone/WhatsApp number or an email address) — in this message or earlier in the
 conversation — reply normally (thank them and confirm the team will be in touch), then add this
 tag at the very end of your reply, on its own line, with only details they actually gave you:
-${LEAD_MARKER_PREFIX} {"name":"...","phone":"...","email":"...","interest":"...","location":"...","preferred_time":"..."}]]
-Use "interest" for the project/product/service they want, "location" for where they are (e.g. a
-city or "abroad, UK"), and "preferred_time" for when they'd like to be contacted. Leave out any
-field you don't know — never guess or invent a value. Send the tag only once per conversation,
-unless they later give a new or corrected phone number or email, then send it again with the
-updated details. Never mention the tag, never put anything after it, and never ask for details
+${LEAD_MARKER_PREFIX} {"name":"...","phone":"...","email":"...","interest":"...","unit":"...","location":"...","preferred_time":"..."}]]
+Use "interest" for just the name of the project, product or service they want (e.g. "Serenity
+Estate", not "3 bedroom villa at Serenity Estate"), "unit" for the specific type or option (e.g. "3
+bedroom villa"), "location" for where they are (e.g. a city or "abroad, UK"), and "preferred_time"
+for when they'd like to be contacted. Leave out any
+field you don't know — never guess or invent a value. Send the tag again only when something changes: they ask about a different project, or give a
+new or corrected phone number or email. Then send it with all their current details. Never mention the tag, never put anything after it, and never ask for details
 just to fill the tag — only when it's natural (they want pricing, a call, a visit, or a follow up).
 If both tags apply in the same reply, put ${NEEDS_HUMAN_MARKER} last.
 
