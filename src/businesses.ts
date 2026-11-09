@@ -17,6 +17,8 @@ export interface Business {
   alertEmails: string | null;
   smsSenderId: string | null;
   clientConfirmationEnabled: boolean;
+  contactPhone: string | null;
+  contactEmail: string | null;
 }
 
 interface BusinessRow {
@@ -35,12 +37,14 @@ interface BusinessRow {
   alert_emails: string | null;
   sms_sender_id: string | null;
   client_confirmation_enabled: boolean;
+  contact_phone: string | null;
+  contact_email: string | null;
 }
 
 const COLUMNS =
   "id, name, site_key, allowed_origin, system_prompt, whatsapp_token, whatsapp_phone_number_id, " +
   "whatsapp_template_name, telegram_bot_token, instagram_page_id, instagram_token, " +
-  "alert_phones, alert_emails, sms_sender_id, client_confirmation_enabled";
+  "alert_phones, alert_emails, sms_sender_id, client_confirmation_enabled, contact_phone, contact_email";
 
 function toBusiness(row: BusinessRow): Business {
   return {
@@ -59,6 +63,8 @@ function toBusiness(row: BusinessRow): Business {
     alertEmails: row.alert_emails,
     smsSenderId: row.sms_sender_id,
     clientConfirmationEnabled: row.client_confirmation_enabled ?? true,
+    contactPhone: row.contact_phone,
+    contactEmail: row.contact_email,
   };
 }
 
@@ -112,6 +118,8 @@ export interface BusinessSettingsUpdate {
   alertEmails?: string | null;
   smsSenderId?: string | null;
   clientConfirmationEnabled?: boolean | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
 }
 
 export async function updateBusinessSettings(id: string, updates: BusinessSettingsUpdate): Promise<Business> {
@@ -128,7 +136,9 @@ export async function updateBusinessSettings(id: string, updates: BusinessSettin
        alert_phones = COALESCE($10, alert_phones),
        alert_emails = COALESCE($11, alert_emails),
        sms_sender_id = COALESCE($12, sms_sender_id),
-       client_confirmation_enabled = COALESCE($13, client_confirmation_enabled)
+       client_confirmation_enabled = COALESCE($13, client_confirmation_enabled),
+       contact_phone = COALESCE($14, contact_phone),
+       contact_email = COALESCE($15, contact_email)
      WHERE id = $1
      RETURNING ${COLUMNS}`,
     [
@@ -145,6 +155,8 @@ export async function updateBusinessSettings(id: string, updates: BusinessSettin
       updates.alertEmails,
       updates.smsSenderId,
       updates.clientConfirmationEnabled,
+      updates.contactPhone,
+      updates.contactEmail,
     ]
   );
   return toBusiness(result.rows[0]);

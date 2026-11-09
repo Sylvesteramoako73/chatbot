@@ -80,10 +80,49 @@ export function parseBotReply(full: string): ParsedBotReply {
   return { visible: visible.replace(/\s+$/, ""), needsHuman, lead };
 }
 
-function buildSystemPrompt(businessName: string, persona: string | null, notesBlock: string): string {
+export interface ChatContext {
+  /** The visitor's name if we already know it (widget name form, WhatsApp profile, earlier in chat). */
+  visitorName?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+}
+
+function visitorBlock(name: string | null | undefined): string {
+  if (name && name.trim()) {
+    return `The visitor's name is ${name.trim()}. Use their first name naturally now and then, not in every message.`;
+  }
+  return `You don't know the visitor's name yet, and you need it before you help with anything. If you
+haven't already asked, start your reply by warmly asking for their name in one short line, and
+don't answer their question yet. If they keep asking without giving a name, kindly explain you just
+need their name first. As soon as they tell you their name, thank them and answer whatever they
+asked earlier, and end that reply with the lead tag holding just their name (see below), e.g.
+${LEAD_MARKER_PREFIX} {"name":"Ama"}]]`;
+}
+
+function scopeBlock(businessName: string, context: ChatContext): string {
+  const ways = [
+    context.contactPhone && `call us on ${context.contactPhone}`,
+    context.contactEmail && `email us at ${context.contactEmail}`,
+  ].filter(Boolean);
+  const contact = ways.length
+    ? ways.join(" or ")
+    : "contact us using the phone number or email address in your instructions above";
+  return `Stay on topic: you only help with ${businessName} and what we offer (our projects, products
+and services, buying or booking, visits, pricing requests, and questions about the company itself).
+If the visitor asks about anything else, for example general knowledge, other companies, or help
+with something unrelated to us, don't answer it. Politely say that's not something you can help
+with here, and that for anything else they can ${contact}. Then offer to help with anything about
+${businessName}.`;
+}
+
+export function buildSystemPrompt(businessName: string, persona: string | null, notesBlock: string, context: ChatContext = {}): string {
   return `You are chatting directly with a visitor on ${businessName}'s own website or messaging channel. You ARE ${businessName}'s assistant — speak as ${businessName} itself, in first person plural ("we", "our", "us"), the way a staff member would. Never describe ${businessName} the way an outside observer or a Wikipedia article would (never say "${businessName} is a..." — say "We're a...").
 
 ${persona ?? defaultTone(businessName)}
+
+${visitorBlock(context.visitorName)}
+
+${scopeBlock(businessName, context)}
 
 Keep every reply short — like a real chat message, not an email or a brochure. Default to 1-3
 short sentences. Answer only what was actually asked; don't pile on every related detail you know
@@ -121,7 +160,9 @@ Use "interest" for just the name of the project, product or service they want (e
 Estate", not "3 bedroom villa at Serenity Estate"), "unit" for the specific type or option (e.g. "3
 bedroom villa"), "location" for where they are (e.g. a city or "abroad, UK"), and "preferred_time"
 for when they'd like to be contacted. Leave out any
-field you don't know — never guess or invent a value. Send the tag again only when something changes: they ask about a different project, or give a
+field you don't know — never guess or invent a value. The one exception to "name AND a way to reach
+them": when the visitor first tells you their name, send the tag with just the name so we can greet
+them properly. Send the tag again only when something changes: they ask about a different project, or give a
 new or corrected phone number or email. Then send it with all their current details. Never mention the tag, never put anything after it, and never ask for details
 just to fill the tag — only when it's natural (they want pricing, a call, a visit, or a follow up).
 If both tags apply in the same reply, put ${NEEDS_HUMAN_MARKER} last.
@@ -136,7 +177,8 @@ export async function* streamChatResponse(
   businessName: string,
   persona: string | null,
   userMessage: string,
-  history: ChatMessage[]
+  history: ChatMessage[],
+  context: ChatContext = {}
 ): AsyncGenerator<string> {
   const chunks = await retrieveContext(businessId, userMessage, TOP_K);
 
@@ -159,7 +201,7 @@ export async function* streamChatResponse(
       model: MODEL,
       stream: true,
       messages: [
-        { role: "system", content: buildSystemPrompt(businessName, persona, notesBlock) },
+        { role: "system", content: buildSystemPrompt(businessName, persona, notesBlock, context) },
         ...history.map((m) => ({ role: m.role, content: m.content })),
         { role: "user", content: userMessage },
       ],

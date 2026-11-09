@@ -39,6 +39,15 @@
         <label for="system-prompt">System prompt</label>
         <textarea id="system-prompt" rows="4"></textarea>
       </div>
+      <div class="field">
+        <label for="contact-phone">Business phone number</label>
+        <input id="contact-phone" type="text" placeholder="e.g. +233 53 000 0053" />
+      </div>
+      <div class="field">
+        <label for="contact-email">Business email</label>
+        <input id="contact-email" type="text" placeholder="e.g. enquiry@yourcompany.com" />
+      </div>
+      <p class="section-desc">The bot only helps with questions about your business. For anything else it asks the visitor to call or email you on these.</p>
       <button class="btn btn-primary" id="save-prompt-btn">Save</button>
     </section>
 
@@ -235,6 +244,8 @@
         document.getElementById("webhook-url").textContent = location.origin + "/api/webhooks/whatsapp";
         document.getElementById("instagram-webhook-url").textContent = location.origin + "/api/webhooks/instagram";
         document.getElementById("system-prompt").value = data.business.systemPrompt || "";
+        document.getElementById("contact-phone").value = data.business.contactPhone || "";
+        document.getElementById("contact-email").value = data.business.contactEmail || "";
         document.getElementById("wa-phone-id").value = data.business.whatsappPhoneNumberId || "";
         document.getElementById("wa-template").value = data.business.whatsappTemplateName || "";
         document.getElementById("ig-page-id").value = data.business.instagramPageId || "";
@@ -271,7 +282,11 @@
       try {
         await api("/api/dashboard/settings", {
           method: "PUT",
-          body: JSON.stringify({ systemPrompt: document.getElementById("system-prompt").value }),
+          body: JSON.stringify({
+            systemPrompt: document.getElementById("system-prompt").value,
+            contactPhone: document.getElementById("contact-phone").value.trim(),
+            contactEmail: document.getElementById("contact-email").value.trim(),
+          }),
         });
         toast("Saved");
       } catch (err) {

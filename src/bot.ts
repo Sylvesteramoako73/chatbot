@@ -1,6 +1,7 @@
 import { Business } from "./businesses";
 import { streamChatResponse, parseBotReply } from "./chat";
 import { handleCapturedLead } from "./leadAlerts";
+import { getLeadById } from "./leads";
 import { getOrCreateConversation, recordMessage, requestHuman, getMessages, Channel, LeadHint } from "./conversations";
 
 const HISTORY_LIMIT = 20;
@@ -33,18 +34,20 @@ export async function handleInboundMessage(
   if (conversation.mode !== "bot") return; // claimed by a rep — they'll see it live in the dashboard
 
   let full = "";
-  for await (const token of streamChatResponse(business.id, business.name, business.systemPrompt, text, history)) {
+  const lead = conversation.leadId ? await getLeadById(conversation.leadId) : null;
+  const context = { visitorName: lead?.name ?? null, contactPhone: business.contactPhone, contactEmail: business.contactEmail };
+  for await (const token of streamChatResponse(business.id, business.name, business.systemPrompt, text, history, context)) {
     full += token;
   }
 
-  const { visible, needsHuman, lead } = parseBotReply(full);
+  const { visible, needsHuman, lead: captured } = parseBotReply(full);
 
   const messageId = await send(visible);
   await recordMessage(conversation, "bot", visible, messageId);
-  if (lead) {
+  if (captured) {
     // WhatsApp's sender number is the customer's real phone even if they didn't type it in chat.
-    if (!lead.phone && channel === "whatsapp") lead.phone = externalId;
-    void handleCapturedLead(business, conversation, lead);
+    if (!captured.phone && channel === "whatsapp") captured.phone = externalId;
+    void handleCapturedLead(business, conversation, captured);
   }
   if (needsHuman) await requestHuman(conversation.id);
 }

@@ -48,6 +48,7 @@ import { notifyTeamMemberOfAssignment } from "./notifications";
 import {
   listLeads,
   getLeadWithConversations,
+  getLeadById,
   updateLeadStage,
   updateLeadDetails,
   mergeConversationIntoLead,
@@ -109,7 +110,9 @@ async function runBotReplyForWidget(
   let full = "";
   let written = "";
   let holding = false;
-  for await (const token of streamChatResponse(conversation.businessId, business?.name ?? "the business", business?.systemPrompt ?? null, message, history)) {
+  const knownLead = conversation.leadId ? await getLeadById(conversation.leadId) : null;
+  const context = { visitorName: knownLead?.name ?? null, contactPhone: business?.contactPhone ?? null, contactEmail: business?.contactEmail ?? null };
+  for await (const token of streamChatResponse(conversation.businessId, business?.name ?? "the business", business?.systemPrompt ?? null, message, history, context)) {
     full += token;
     if (holding) continue;
     const pending = full.slice(written.length);
@@ -522,6 +525,8 @@ app.put("/api/dashboard/settings", requireAuth, requireAdmin, async (req: Reques
     alertEmails,
     smsSenderId,
     clientConfirmationEnabled,
+    contactPhone,
+    contactEmail,
   } = req.body;
 
   const business = await updateBusinessSettings(req.session.businessId!, {
@@ -537,6 +542,8 @@ app.put("/api/dashboard/settings", requireAuth, requireAdmin, async (req: Reques
     alertEmails,
     smsSenderId,
     clientConfirmationEnabled: typeof clientConfirmationEnabled === "boolean" ? clientConfirmationEnabled : undefined,
+    contactPhone,
+    contactEmail,
   });
 
   // Telegram has no separate "register this webhook in a dashboard" step like WhatsApp/Instagram —

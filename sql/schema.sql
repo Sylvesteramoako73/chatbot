@@ -31,6 +31,9 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS alert_phones TEXT;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS alert_emails TEXT;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS sms_sender_id TEXT;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS client_confirmation_enabled BOOLEAN NOT NULL DEFAULT true;
+-- Where the bot sends visitors whose questions aren't about this business ("call us on ... or email ...").
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS contact_phone TEXT;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS contact_email TEXT;
 
 CREATE TABLE IF NOT EXISTS team_members (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
