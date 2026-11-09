@@ -26,6 +26,14 @@ interface LeadRow {
 
 const COLUMNS = "id, business_id, name, phone, email, stage, notes, updated_at";
 
+// A lead counts once it has any details, has been moved along the pipeline, or its conversation has
+// at least one message. Older widget versions created a blank lead per page view; those stay in the
+// table but are left out of the Leads page and the analytics.
+export const REAL_LEAD_SQL = `(leads.name IS NOT NULL OR leads.phone IS NOT NULL OR leads.email IS NOT NULL
+  OR COALESCE(leads.notes, '') <> '' OR leads.stage <> 'new'
+  OR EXISTS (SELECT 1 FROM conversations c WHERE c.lead_id = leads.id
+    AND (c.mode = 'human' OR EXISTS (SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id))))`;
+
 function toLead(row: LeadRow): Lead {
   return {
     id: row.id,
@@ -57,7 +65,7 @@ export async function getLeadById(leadId: string): Promise<Lead | null> {
 
 export async function listLeads(businessId: string): Promise<Lead[]> {
   const result = await pool.query<LeadRow>(
-    `SELECT ${COLUMNS} FROM leads WHERE business_id = $1 ORDER BY updated_at DESC`,
+    `SELECT ${COLUMNS} FROM leads WHERE business_id = $1 AND ${REAL_LEAD_SQL} ORDER BY updated_at DESC`,
     [businessId]
   );
   return result.rows.map(toLead);
@@ -141,7 +149,7 @@ export interface LeadStageCounts {
 
 export async function getLeadStageCounts(businessId: string): Promise<LeadStageCounts> {
   const result = await pool.query<{ stage: LeadStage; count: string }>(
-    "SELECT stage, count(*) AS count FROM leads WHERE business_id = $1 GROUP BY stage",
+    `SELECT stage, count(*) AS count FROM leads WHERE business_id = $1 AND ${REAL_LEAD_SQL} GROUP BY stage`,
     [businessId]
   );
 

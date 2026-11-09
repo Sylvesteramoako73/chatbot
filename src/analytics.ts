@@ -1,5 +1,5 @@
 import { pool } from "./db";
-import { getLeadStageCounts, LeadStageCounts } from "./leads";
+import { REAL_LEAD_SQL, getLeadStageCounts, LeadStageCounts } from "./leads";
 
 export interface DailyCount {
   date: string; // YYYY-MM-DD
@@ -43,7 +43,7 @@ export async function getAnalyticsSummary(businessId: string): Promise<Analytics
   const dayRows = await pool.query<{ day: string; count: string }>(
     `SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day, count(*) AS count
      FROM leads
-     WHERE business_id = $1 AND created_at > now() - interval '30 days'
+     WHERE business_id = $1 AND created_at > now() - interval '30 days' AND ${REAL_LEAD_SQL}
      GROUP BY day
      ORDER BY day`,
     [businessId]
@@ -51,7 +51,10 @@ export async function getAnalyticsSummary(businessId: string): Promise<Analytics
   const leadsByDay = fillLast30Days(dayRows.rows);
 
   const channelRows = await pool.query<{ channel: string; count: string }>(
-    "SELECT channel, count(*) AS count FROM conversations WHERE business_id = $1 GROUP BY channel",
+    `SELECT channel, count(*) AS count FROM conversations c
+     WHERE c.business_id = $1
+       AND (c.mode = 'human' OR EXISTS (SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id))
+     GROUP BY channel`,
     [businessId]
   );
   const conversationsByChannel = channelRows.rows.map((r) => ({ channel: r.channel, count: Number(r.count) }));
