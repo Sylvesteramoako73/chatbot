@@ -66,7 +66,14 @@
     };
 
     function channelIcon(channel) { return CHANNEL_ICONS[channel] || CHANNEL_ICONS.widget; }
-    function channelWho(conversation) { return conversation.channel === "widget" ? "Website visitor" : conversation.externalId; }
+    // Show who the conversation is with: the lead's name once we have it (plus the number on
+    // WhatsApp), falling back to "Website visitor" / the channel ID only until they've given a name.
+    function channelWho(conversation) {
+      var fallback = conversation.channel === "widget" ? "Website visitor" : conversation.externalId;
+      if (!conversation.leadName) return fallback;
+      if (conversation.channel === "whatsapp") return conversation.leadName + " (" + (conversation.leadPhone || conversation.externalId) + ")";
+      return conversation.leadName;
+    }
 
     function toast(message) {
       var el = document.getElementById("toast");
