@@ -408,7 +408,8 @@ app.get("/api/dashboard/conversations/:id/messages", requireAuth, async (req: Re
   if (!conversation) return;
   const messages = await getMessages(conversation.id);
   await markConversationRead(conversation.id); // opening a conversation is what marks it read
-  res.json({ conversation, messages });
+  const lead = conversation.leadId ? await getLeadById(conversation.leadId) : null;
+  res.json({ conversation: { ...conversation, leadName: lead?.name ?? null, leadPhone: lead?.phone ?? null }, messages });
 });
 
 app.post("/api/dashboard/conversations/:id/claim", requireAuth, async (req: Request, res: Response) => {

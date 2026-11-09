@@ -141,6 +141,9 @@ export interface ConversationSummary {
   updatedAt: string;
   lastMessage: string | null;
   unreadCount: number;
+  /** The lead's name (and phone), so the inbox can show who it is instead of "Website visitor". */
+  leadName: string | null;
+  leadPhone: string | null;
 }
 
 export async function listConversations(
@@ -162,11 +165,12 @@ export async function listConversations(
 
   const result = await pool.query(
     `SELECT c.id, c.channel, c.external_id, c.mode, c.claimed_by, tm.name AS claimed_by_name,
-            c.closed_at, c.updated_at, c.unread_count,
+            c.closed_at, c.updated_at, c.unread_count, l.name AS lead_name, l.phone AS lead_phone,
             (SELECT content FROM conversation_messages m
              WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message
      FROM conversations c
      LEFT JOIN team_members tm ON tm.id = c.claimed_by
+     LEFT JOIN leads l ON l.id = c.lead_id
      WHERE ${conditions.join(" AND ")}
      ORDER BY c.updated_at DESC
      LIMIT 100`,
@@ -183,6 +187,8 @@ export async function listConversations(
     closedAt: r.closed_at,
     updatedAt: r.updated_at,
     lastMessage: r.last_message,
+    leadName: r.lead_name,
+    leadPhone: r.lead_phone,
     unreadCount: r.unread_count,
   }));
 }
