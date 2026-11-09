@@ -84,6 +84,14 @@
   var humanEl = panel.querySelector("#wcb-human");
   var history = [];
 
+  // The visitor has to give their name before the bot will help. Anything they type first is held
+  // here and sent automatically once the name is in, so nothing they asked gets lost.
+  var NAME_KEY = "wcb_name_" + sessionId;
+  var pendingQuestions = [];
+  function knownName() {
+    return localStorage.getItem(NAME_KEY);
+  }
+
   function addMessage(role, text) {
     var div = document.createElement("div");
     div.className = "wcb-msg " + role;
@@ -193,6 +201,11 @@
   }
 
   function showNameForm() {
+    var existingForm = messagesEl.querySelector(".wcb-name-form input");
+    if (existingForm) {
+      existingForm.focus();
+      return;
+    }
     var formDiv = document.createElement("div");
     formDiv.className = "wcb-name-form";
     formDiv.innerHTML = '<input type="text" placeholder="Your name" /><button type="button">Send</button>';
@@ -207,11 +220,19 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ siteKey: SITE_KEY, sessionId: sessionId, name: name }),
       })
-        .then(function () {
-          addMessage("bot", "Nice to meet you, " + name + "! What can I help you with today?");
-        })
         .catch(function () {
-          addMessage("system", "Couldn't save that — no worries, go ahead and ask your question.");
+          // Don't block the visitor over a failed save — the bot still learns the name from the chat.
+        })
+        .then(function () {
+          localStorage.setItem(NAME_KEY, name);
+          if (pendingQuestions.length) {
+            var held = pendingQuestions.join("\n");
+            pendingQuestions = [];
+            addMessage("bot", "Thank you, " + name + ".");
+            sendText(held, true);
+          } else {
+            addMessage("bot", "Nice to meet you, " + name + ". What can I help you with today?");
+          }
         });
     }
 
@@ -249,7 +270,22 @@
     if (!text) return;
     userInteracted = true;
     inputEl.value = "";
-    addMessage("user", text);
+
+    if (!handoffActive && !knownName()) {
+      addMessage("user", text);
+      pendingQuestions.push(text);
+      if (!messagesEl.querySelector(".wcb-name-form")) {
+        addMessage("bot", "Before we start, may I have your name?");
+      }
+      showNameForm();
+      return;
+    }
+
+    await sendText(text, false);
+  }
+
+  async function sendText(text, alreadyShown) {
+    if (!alreadyShown) addMessage("user", text);
     var historyForRequest = history.slice();
     history.push({ role: "user", content: text });
 
