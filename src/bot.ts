@@ -35,12 +35,23 @@ export async function handleInboundMessage(
 
   let full = "";
   const lead = conversation.leadId ? await getLeadById(conversation.leadId) : null;
-  const context = { visitorName: lead?.name ?? null, contactPhone: business.contactPhone, contactEmail: business.contactEmail };
+  const context = {
+    visitorName: lead?.name ?? null,
+    contactPhone: business.contactPhone,
+    contactEmail: business.contactEmail,
+    projectOptions: business.projectOptions,
+  };
   for await (const token of streamChatResponse(business.id, business.name, business.systemPrompt, text, history, context)) {
     full += token;
   }
 
-  const { visible, needsHuman, lead: captured } = parseBotReply(full);
+  const parsed = parseBotReply(full);
+  const { needsHuman, lead: captured } = parsed;
+  // No tick boxes outside the website widget, so list the projects as plain lines instead.
+  const visible =
+    parsed.showOptions && business.projectOptions.length
+      ? `${parsed.visible}\n\n${business.projectOptions.join("\n")}`
+      : parsed.visible;
 
   const messageId = await send(visible);
   await recordMessage(conversation, "bot", visible, messageId);

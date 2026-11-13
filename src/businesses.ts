@@ -19,6 +19,7 @@ export interface Business {
   clientConfirmationEnabled: boolean;
   contactPhone: string | null;
   contactEmail: string | null;
+  projectOptions: string[];
 }
 
 interface BusinessRow {
@@ -39,12 +40,13 @@ interface BusinessRow {
   client_confirmation_enabled: boolean;
   contact_phone: string | null;
   contact_email: string | null;
+  project_options: string | null;
 }
 
 const COLUMNS =
   "id, name, site_key, allowed_origin, system_prompt, whatsapp_token, whatsapp_phone_number_id, " +
   "whatsapp_template_name, telegram_bot_token, instagram_page_id, instagram_token, " +
-  "alert_phones, alert_emails, sms_sender_id, client_confirmation_enabled, contact_phone, contact_email";
+  "alert_phones, alert_emails, sms_sender_id, client_confirmation_enabled, contact_phone, contact_email, project_options";
 
 function toBusiness(row: BusinessRow): Business {
   return {
@@ -65,7 +67,23 @@ function toBusiness(row: BusinessRow): Business {
     clientConfirmationEnabled: row.client_confirmation_enabled ?? true,
     contactPhone: row.contact_phone,
     contactEmail: row.contact_email,
+    projectOptions: parseProjectOptions(row.project_options),
   };
+}
+
+/** One option per line (commas also accepted), trimmed, de-duplicated, capped so the widget stays tidy. */
+export function parseProjectOptions(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(/[\n,]/)) {
+    const v = part.trim().slice(0, 60);
+    if (v && !seen.has(v.toLowerCase())) {
+      seen.add(v.toLowerCase());
+      out.push(v);
+    }
+  }
+  return out.slice(0, 12);
 }
 
 export function generateSiteKey(): string {
@@ -120,6 +138,7 @@ export interface BusinessSettingsUpdate {
   clientConfirmationEnabled?: boolean | null;
   contactPhone?: string | null;
   contactEmail?: string | null;
+  projectOptions?: string | null;
 }
 
 export async function updateBusinessSettings(id: string, updates: BusinessSettingsUpdate): Promise<Business> {
@@ -138,7 +157,8 @@ export async function updateBusinessSettings(id: string, updates: BusinessSettin
        sms_sender_id = COALESCE($12, sms_sender_id),
        client_confirmation_enabled = COALESCE($13, client_confirmation_enabled),
        contact_phone = COALESCE($14, contact_phone),
-       contact_email = COALESCE($15, contact_email)
+       contact_email = COALESCE($15, contact_email),
+       project_options = COALESCE($16, project_options)
      WHERE id = $1
      RETURNING ${COLUMNS}`,
     [
@@ -157,6 +177,7 @@ export async function updateBusinessSettings(id: string, updates: BusinessSettin
       updates.clientConfirmationEnabled,
       updates.contactPhone,
       updates.contactEmail,
+      updates.projectOptions,
     ]
   );
   return toBusiness(result.rows[0]);

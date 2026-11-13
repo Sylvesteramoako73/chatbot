@@ -92,6 +92,9 @@ app.get("/api/auth/me", requireAuth, async (req: Request, res: Response) => {
 // the customer. Text streams out live until a "[[" appears; from there on everything is held back,
 // and once the reply is complete parseBotReply() decides what (if anything) is still visible. A lone
 // trailing "[" and trailing whitespace are also held, since either could be the start of a tag.
+// ASCII record separator: never produced by the model, so it can't collide with reply text.
+const OPTIONS_SEPARATOR = "\u001e";
+
 function streamableLength(pending: string): number {
   const tagStart = pending.indexOf("[[");
   let end = tagStart === -1 ? pending.length : tagStart;
@@ -111,7 +114,13 @@ async function runBotReplyForWidget(
   let written = "";
   let holding = false;
   const knownLead = conversation.leadId ? await getLeadById(conversation.leadId) : null;
-  const context = { visitorName: knownLead?.name ?? null, contactPhone: business?.contactPhone ?? null, contactEmail: business?.contactEmail ?? null };
+  const projectOptions = business?.projectOptions ?? [];
+  const context = {
+    visitorName: knownLead?.name ?? null,
+    contactPhone: business?.contactPhone ?? null,
+    contactEmail: business?.contactEmail ?? null,
+    projectOptions,
+  };
   for await (const token of streamChatResponse(conversation.businessId, business?.name ?? "the business", business?.systemPrompt ?? null, message, history, context)) {
     full += token;
     if (holding) continue;
@@ -124,8 +133,10 @@ async function runBotReplyForWidget(
     if (pending.includes("[[")) holding = true;
   }
 
-  const { visible, needsHuman, lead } = parseBotReply(full);
+  const { visible, needsHuman, lead, showOptions } = parseBotReply(full);
   if (visible.startsWith(written)) res.write(visible.slice(written.length));
+  // The widget splits the stream on this separator and renders what follows as tick boxes.
+  if (showOptions && projectOptions.length) res.write(OPTIONS_SEPARATOR + JSON.stringify({ options: projectOptions }));
   res.end();
 
   await recordMessage(conversation, "bot", visible);
@@ -173,6 +184,15 @@ app.post("/api/chat", async (req: Request, res: Response) => {
     if (!res.headersSent) res.status(500).json({ error: "Internal error" });
     else res.end();
   }
+});
+
+// Lets the widget show the business's project tick boxes right after the visitor gives their name.
+app.get("/api/chat/config", async (req: Request, res: Response) => {
+  const siteKey = typeof req.query.siteKey === "string" ? req.query.siteKey : "";
+  if (!siteKey) return res.status(400).json({ error: "siteKey is required" });
+  const business = await getBusinessBySiteKey(siteKey);
+  if (!business) return res.status(404).json({ error: "Unknown site key" });
+  res.json({ projectOptions: business.projectOptions });
 });
 
 app.post("/api/chat/handoff", async (req: Request, res: Response) => {
@@ -528,6 +548,7 @@ app.put("/api/dashboard/settings", requireAuth, requireAdmin, async (req: Reques
     clientConfirmationEnabled,
     contactPhone,
     contactEmail,
+    projectOptions,
   } = req.body;
 
   const business = await updateBusinessSettings(req.session.businessId!, {
@@ -545,6 +566,7 @@ app.put("/api/dashboard/settings", requireAuth, requireAdmin, async (req: Reques
     clientConfirmationEnabled: typeof clientConfirmationEnabled === "boolean" ? clientConfirmationEnabled : undefined,
     contactPhone,
     contactEmail,
+    projectOptions: typeof projectOptions === "string" ? projectOptions : undefined,
   });
 
   // Telegram has no separate "register this webhook in a dashboard" step like WhatsApp/Instagram —

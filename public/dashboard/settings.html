@@ -48,6 +48,11 @@
         <input id="contact-email" type="text" placeholder="e.g. enquiry@yourcompany.com" />
       </div>
       <p class="section-desc">The bot only helps with questions about your business. For anything else it asks the visitor to call or email you on these.</p>
+      <div class="field">
+        <label for="project-options">Projects (one per line)</label>
+        <textarea id="project-options" rows="4" placeholder="e.g.&#10;Serenity Estate&#10;Solarium"></textarea>
+      </div>
+      <p class="section-desc">Visitors see these as tick boxes after giving their name, and whenever the bot asks which one they're interested in. Leave empty to turn the tick boxes off.</p>
       <button class="btn btn-primary" id="save-prompt-btn">Save</button>
     </section>
 
@@ -246,6 +251,7 @@
         document.getElementById("system-prompt").value = data.business.systemPrompt || "";
         document.getElementById("contact-phone").value = data.business.contactPhone || "";
         document.getElementById("contact-email").value = data.business.contactEmail || "";
+        document.getElementById("project-options").value = (data.business.projectOptions || []).join("\n");
         document.getElementById("wa-phone-id").value = data.business.whatsappPhoneNumberId || "";
         document.getElementById("wa-template").value = data.business.whatsappTemplateName || "";
         document.getElementById("ig-page-id").value = data.business.instagramPageId || "";
@@ -286,6 +292,7 @@
             systemPrompt: document.getElementById("system-prompt").value,
             contactPhone: document.getElementById("contact-phone").value.trim(),
             contactEmail: document.getElementById("contact-email").value.trim(),
+            projectOptions: document.getElementById("project-options").value.trim(),
           }),
         });
         toast("Saved");
