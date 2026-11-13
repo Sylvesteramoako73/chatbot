@@ -7,7 +7,8 @@ interface VoyageEmbeddingResponse {
 
 // Free-tier Voyage accounts (no billing on file) are limited to 3 requests/minute.
 // Space calls out so we don't get rate-limited mid-crawl, and retry with backoff if we do.
-const MIN_INTERVAL_MS = 21000;
+// Set VOYAGE_MIN_INTERVAL_MS=0 once billing is added to the Voyage account (limits then go way up).
+const MIN_INTERVAL_MS = Number(process.env.VOYAGE_MIN_INTERVAL_MS ?? 21000);
 let lastCallAt = 0;
 
 function sleep(ms: number): Promise<void> {
@@ -20,6 +21,24 @@ async function waitForRateLimit() {
           await sleep(MIN_INTERVAL_MS - elapsed);
     }
     lastCallAt = Date.now();
+}
+
+/**
+ * One quick embedding for a visitor's question. Never queues behind the crawl throttle and never
+ * retries: a chat reply can't wait 20+ seconds, so on a rate limit or slow response this throws
+ * and the caller falls back to keyword search.
+ */
+export async function embedQueryFast(text: string, timeoutMs = 6000): Promise<number[]> {
+  if (!process.env.VOYAGE_API_KEY) throw new Error("VOYAGE_API_KEY is not set");
+  const res = await fetch(VOYAGE_API_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.VOYAGE_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ input: [text], model: EMBEDDING_MODEL, input_type: "query" }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) throw new Error(`Voyage query embedding failed: ${res.status}`);
+  const data = (await res.json()) as VoyageEmbeddingResponse;
+  return data.data[0].embedding;
 }
 
 export async function embedTexts(
