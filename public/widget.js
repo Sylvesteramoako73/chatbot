@@ -53,6 +53,7 @@
     ".wcb-typing span:nth-child(2){animation-delay:0.15s}" +
     ".wcb-typing span:nth-child(3){animation-delay:0.3s}" +
     ".wcb-options{margin:2px 0 12px;padding:10px;border:1px solid #e5e5e5;border-radius:10px;background:#fafafa}" +
+    ".wcb-options-caption{font-size:12px;color:#666;margin:0 0 4px}" +
     ".wcb-options label{display:flex;align-items:center;gap:8px;padding:6px 2px;font-size:13px;color:#222;cursor:pointer}" +
     ".wcb-options input{width:16px;height:16px;margin:0;accent-color:#111;cursor:pointer}" +
     ".wcb-options button{margin-top:6px;width:100%;border:none;background:#111;color:#fff;border-radius:6px;padding:8px;font-size:13px;cursor:pointer}" +
@@ -113,11 +114,17 @@
     return list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
   }
 
-  function showOptions(options) {
+  function showOptions(options, caption) {
     if (!options || !options.length) return;
     messagesEl.querySelectorAll(".wcb-options").forEach(function (el) { el.remove(); });
     var box = document.createElement("div");
     box.className = "wcb-options";
+    if (caption) {
+      var cap = document.createElement("div");
+      cap.className = "wcb-options-caption";
+      cap.textContent = caption;
+      box.appendChild(cap);
+    }
     options.forEach(function (opt) {
       var label = document.createElement("label");
       var cb = document.createElement("input");
@@ -312,12 +319,9 @@
             addMessage("bot", "Thank you, " + name + ".");
             sendText(held, true);
           } else {
-            if (projectOptions.length) {
-              addMessage("bot", "Nice to meet you, " + name + ". Which of our projects are you interested in?");
-              showOptions(projectOptions);
-            } else {
-              addMessage("bot", "Nice to meet you, " + name + ". What can I help you with today?");
-            }
+            addMessage("bot", "Nice to meet you, " + name + ". What can I help you with today?");
+            // Optional shortcut: tick a project, or just type any question instead.
+            if (projectOptions.length) showOptions(projectOptions, "Interested in one of our projects? Tick any, or just type your question below.");
           }
         });
     }

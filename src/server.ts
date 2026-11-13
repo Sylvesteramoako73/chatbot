@@ -2,7 +2,7 @@ import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import path from "path";
-import { streamChatResponse, ChatMessage, parseBotReply, visitorNamedProject } from "./chat";
+import { streamChatResponse, ChatMessage, parseBotReply, visitorNamedProject, projectsAlreadyOffered } from "./chat";
 import { handleCapturedLead } from "./leadAlerts";
 import { ingestDocument, ingestWebsite } from "./ingest";
 import {
@@ -141,7 +141,7 @@ async function runBotReplyForWidget(
     [message, ...history.filter((m) => m.role === "user").map((m) => m.content)],
     projectOptions
   );
-  if (showOptions && projectOptions.length && !alreadyChose) res.write(OPTIONS_SEPARATOR + JSON.stringify({ options: projectOptions }));
+  if (showOptions && projectOptions.length && !alreadyChose && !projectsAlreadyOffered(history)) res.write(OPTIONS_SEPARATOR + JSON.stringify({ options: projectOptions }));
   res.end();
 
   await recordMessage(conversation, "bot", visible);

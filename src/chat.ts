@@ -150,6 +150,7 @@ export interface ChatContext {
   visitorHasContact?: boolean;
   /** Filled in by streamChatResponse from the history. */
   alreadyAskedForContact?: boolean;
+  projectsAlreadyOffered?: boolean;
 }
 
 const CONTACT_ASK_RE = /\b(phone|whatsapp|e-?mail|contact (details|number)|your number)\b/i;
@@ -171,15 +172,22 @@ to book a visit, or to have details sent to them.`;
   return "";
 }
 
-function optionsBlock(options: string[] | undefined): string {
-  if (!options || !options.length) return "";
-  return `\n\nOur projects are: ${options.join(", ")}. When the visitor hasn't said which one they're
-interested in and it would help to know (for example they ask generally about homes, prices,
-availability or visits), ask in one short line which project interests them and end your reply
-with this exact tag on its own line: ${OPTIONS_MARKER}
-The visitor will see the projects as tick boxes, so don't list them yourself. Use the tag at most
-once in a conversation unless they ask to see the options again, and never once they've named a
-project.`;
+function optionsBlock(options: string[] | undefined, alreadyOffered: boolean): string {
+  if (!options || !options.length || alreadyOffered) return "";
+  return `\n\nOur projects are: ${options.join(", ")}. Only if the visitor is asking about buying or
+renting a home or plot (prices, unit types, availability, payment plans or a site visit) and you
+genuinely can't answer without knowing which project they mean, ask in one short line which one
+interests them and end your reply with this exact tag on its own line: ${OPTIONS_MARKER}
+The visitor will see the projects as tick boxes, so don't list them yourself. Never use the tag for
+questions about the company, our office, jobs, services, construction on their own land, or
+anything else that isn't about choosing one of these projects. When in doubt, just answer.`;
+}
+
+const PROJECT_QUESTION_RE = /which (of our )?(projects?|developments?)/i;
+
+/** Has the visitor already been asked to pick a project in this chat? Then don't offer it again. */
+export function projectsAlreadyOffered(history: ChatMessage[]): boolean {
+  return history.some((m) => m.role === "assistant" && PROJECT_QUESTION_RE.test(m.content));
 }
 
 function visitorBlock(name: string | null | undefined): string {
@@ -218,7 +226,7 @@ ${persona ?? defaultTone(businessName)}
 
 ${visitorBlock(context.visitorName)}${contactBlock(!!context.visitorHasContact, !!context.alreadyAskedForContact)}
 
-${scopeBlock(businessName, context)}${optionsBlock(context.projectOptions)}
+${scopeBlock(businessName, context)}${optionsBlock(context.projectOptions, !!context.projectsAlreadyOffered)}
 
 Keep every reply very short, like a quick chat message from a real person. Aim for one or two
 short sentences and stay under 40 words. Answer only the exact thing asked, never add extra
@@ -298,6 +306,7 @@ export async function* streamChatResponse(
       content: buildSystemPrompt(businessName, persona, notesBlock, {
         ...context,
         alreadyAskedForContact: botAlreadyAskedForContact(history),
+        projectsAlreadyOffered: projectsAlreadyOffered(history),
       }),
     },
     ...history.map((m) => ({ role: m.role, content: m.content })),
