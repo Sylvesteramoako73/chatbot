@@ -92,6 +92,19 @@ export function parseBotReply(full: string): ParsedBotReply {
   return { visible: visible.replace(/\s+$/, ""), needsHuman, lead, showOptions };
 }
 
+/**
+ * True once the visitor has named any of the projects (by full name or its first word, e.g.
+ * "Serenity"), so the tick boxes aren't offered again after they've already chosen.
+ */
+export function visitorNamedProject(texts: string[], options: string[]): boolean {
+  const said = texts.join(" \n ").toLowerCase();
+  return options.some((opt) => {
+    const full = opt.toLowerCase();
+    const first = full.split(/\s+/)[0];
+    return said.includes(full) || (first.length >= 4 && new RegExp(`\\b${first.replace(/[^a-z0-9]/g, "")}\\b`).test(said));
+  });
+}
+
 export interface ChatContext {
   /** The visitor's name if we already know it (widget name form, WhatsApp profile, earlier in chat). */
   visitorName?: string | null;

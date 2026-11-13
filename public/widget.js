@@ -344,6 +344,8 @@
   }
 
   async function sendText(text, alreadyShown) {
+    // Once the visitor sends anything, any earlier tick boxes are out of date.
+    messagesEl.querySelectorAll(".wcb-options").forEach(function (el) { el.remove(); });
     if (!alreadyShown) addMessage("user", text);
     var historyForRequest = history.slice();
     history.push({ role: "user", content: text });
