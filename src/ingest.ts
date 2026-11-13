@@ -38,6 +38,16 @@ export async function ingestDocument(
     }
   }
 
+  // Re-crawling a page replaces its older copy, so outdated text can't linger in the bot's notes.
+  // Done only after the new copy is fully stored, so a failed crawl never leaves the page missing.
+  if (sourceUrl) {
+    await pool.query("DELETE FROM documents WHERE business_id = $1 AND source_url = $2 AND id <> $3", [
+      businessId,
+      sourceUrl,
+      documentId,
+    ]);
+  }
+
   return { documentId, chunkCount };
 }
 
