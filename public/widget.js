@@ -209,7 +209,9 @@
     humanEl.disabled = true;
   }
 
-  humanEl.addEventListener("click", async function () {
+  // "Talk to a person" also needs a name first, so the team knows who they're talking to.
+  var pendingHandoff = false;
+  async function requestHandoff() {
     humanEl.disabled = true;
     try {
       var res = await fetch(HANDOFF_URL, {
@@ -219,11 +221,24 @@
       });
       if (!res.ok) throw new Error("handoff request failed");
       setHandoffActive();
-      addMessage("system", "Connecting you to our team — they'll reply here shortly.");
+      addMessage("system", "Connecting you to our team. They'll reply here shortly.");
     } catch (e) {
       humanEl.disabled = false;
-      addMessage("system", "Couldn't reach our team right now — please try again.");
+      addMessage("system", "Couldn't reach our team right now. Please try again.");
     }
+  }
+
+  humanEl.addEventListener("click", function () {
+    userInteracted = true;
+    if (!knownName()) {
+      pendingHandoff = true;
+      if (!messagesEl.querySelector(".wcb-name-form")) {
+        addMessage("bot", "Sure. May I have your name first, so our team knows who they're speaking with?");
+      }
+      showNameForm();
+      return;
+    }
+    requestHandoff();
   });
 
   // Team replies from the dashboard arrive here, pushed live — no page reload needed. A "handoff"
@@ -279,6 +294,18 @@
         })
         .then(function () {
           localStorage.setItem(NAME_KEY, name);
+          if (pendingHandoff) {
+            pendingHandoff = false;
+            addMessage("bot", "Thank you, " + name + ".");
+            requestHandoff().then(function () {
+              if (pendingQuestions.length) {
+                var heldForTeam = pendingQuestions.join("\n");
+                pendingQuestions = [];
+                sendText(heldForTeam, true);
+              }
+            });
+            return;
+          }
           if (pendingQuestions.length) {
             var held = pendingQuestions.join("\n");
             pendingQuestions = [];

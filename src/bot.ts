@@ -40,6 +40,7 @@ export async function handleInboundMessage(
     contactPhone: business.contactPhone,
     contactEmail: business.contactEmail,
     projectOptions: business.projectOptions,
+    visitorHasContact: !!(lead?.phone || lead?.email),
   };
   for await (const token of streamChatResponse(business.id, business.name, business.systemPrompt, text, history, context)) {
     full += token;

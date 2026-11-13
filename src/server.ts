@@ -120,6 +120,7 @@ async function runBotReplyForWidget(
     contactPhone: business?.contactPhone ?? null,
     contactEmail: business?.contactEmail ?? null,
     projectOptions,
+    visitorHasContact: !!(knownLead?.phone || knownLead?.email),
   };
   for await (const token of streamChatResponse(conversation.businessId, business?.name ?? "the business", business?.systemPrompt ?? null, message, history, context)) {
     full += token;

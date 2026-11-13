@@ -112,6 +112,29 @@ export interface ChatContext {
   contactEmail?: string | null;
   /** The business's projects/products, offered to the visitor as tick boxes. */
   projectOptions?: string[];
+  /** True when we already hold a phone number or email for this visitor. */
+  visitorHasContact?: boolean;
+  /** Filled in by streamChatResponse from the history. */
+  alreadyAskedForContact?: boolean;
+}
+
+const CONTACT_ASK_RE = /\b(phone|whatsapp|e-?mail|contact (details|number)|your number)\b/i;
+
+/** Has the bot already asked this visitor for their contact details earlier in the chat? */
+export function botAlreadyAskedForContact(history: ChatMessage[]): boolean {
+  return history.some((m) => m.role === "assistant" && m.content.includes("?") && CONTACT_ASK_RE.test(m.content));
+}
+
+function contactBlock(hasContact: boolean, alreadyAsked: boolean): string {
+  if (hasContact) {
+    return `\n\nWe already have this visitor's contact details, so never ask for their phone number or email.`;
+  }
+  if (alreadyAsked) {
+    return `\n\nYou have already asked this visitor for a phone number or email in this chat. Do not ask
+again in this reply. Just answer their question. Only bring it up again if they ask to be called,
+to book a visit, or to have details sent to them.`;
+  }
+  return "";
 }
 
 function optionsBlock(options: string[] | undefined): string {
@@ -159,7 +182,7 @@ export function buildSystemPrompt(businessName: string, persona: string | null, 
 
 ${persona ?? defaultTone(businessName)}
 
-${visitorBlock(context.visitorName)}
+${visitorBlock(context.visitorName)}${contactBlock(!!context.visitorHasContact, !!context.alreadyAskedForContact)}
 
 ${scopeBlock(businessName, context)}${optionsBlock(context.projectOptions)}
 
@@ -245,7 +268,13 @@ export async function* streamChatResponse(
       model: MODEL,
       stream: true,
       messages: [
-        { role: "system", content: buildSystemPrompt(businessName, persona, notesBlock, context) },
+        {
+          role: "system",
+          content: buildSystemPrompt(businessName, persona, notesBlock, {
+            ...context,
+            alreadyAskedForContact: botAlreadyAskedForContact(history),
+          }),
+        },
         ...history.map((m) => ({ role: m.role, content: m.content })),
         { role: "user", content: userMessage },
       ],
