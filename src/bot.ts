@@ -1,5 +1,5 @@
 import { Business } from "./businesses";
-import { streamChatResponse, parseBotReply } from "./chat";
+import { streamChatResponse, parseBotReply, visitorNamedProject } from "./chat";
 import { handleCapturedLead } from "./leadAlerts";
 import { getLeadById } from "./leads";
 import { getOrCreateConversation, recordMessage, requestHuman, getMessages, Channel, LeadHint } from "./conversations";
@@ -49,7 +49,9 @@ export async function handleInboundMessage(
   const { needsHuman, lead: captured } = parsed;
   // No tick boxes outside the website widget, so list the projects as plain lines instead.
   const visible =
-    parsed.showOptions && business.projectOptions.length
+    parsed.showOptions &&
+    business.projectOptions.length &&
+    !visitorNamedProject([text, ...history.filter((m) => m.role === "user").map((m) => m.content)], business.projectOptions)
       ? `${parsed.visible}\n\n${business.projectOptions.join("\n")}`
       : parsed.visible;
 

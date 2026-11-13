@@ -2,7 +2,7 @@ import "dotenv/config";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import path from "path";
-import { streamChatResponse, ChatMessage, parseBotReply } from "./chat";
+import { streamChatResponse, ChatMessage, parseBotReply, visitorNamedProject } from "./chat";
 import { handleCapturedLead } from "./leadAlerts";
 import { ingestDocument, ingestWebsite } from "./ingest";
 import {
@@ -136,7 +136,11 @@ async function runBotReplyForWidget(
   const { visible, needsHuman, lead, showOptions } = parseBotReply(full);
   if (visible.startsWith(written)) res.write(visible.slice(written.length));
   // The widget splits the stream on this separator and renders what follows as tick boxes.
-  if (showOptions && projectOptions.length) res.write(OPTIONS_SEPARATOR + JSON.stringify({ options: projectOptions }));
+  const alreadyChose = visitorNamedProject(
+    [message, ...history.filter((m) => m.role === "user").map((m) => m.content)],
+    projectOptions
+  );
+  if (showOptions && projectOptions.length && !alreadyChose) res.write(OPTIONS_SEPARATOR + JSON.stringify({ options: projectOptions }));
   res.end();
 
   await recordMessage(conversation, "bot", visible);
