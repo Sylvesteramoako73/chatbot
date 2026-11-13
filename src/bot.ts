@@ -1,5 +1,5 @@
 import { Business } from "./businesses";
-import { streamChatResponse, parseBotReply, visitorNamedProject } from "./chat";
+import { streamChatResponse, parseBotReply, visitorNamedProject, projectsAlreadyOffered } from "./chat";
 import { handleCapturedLead } from "./leadAlerts";
 import { getLeadById } from "./leads";
 import { getOrCreateConversation, recordMessage, requestHuman, getMessages, Channel, LeadHint } from "./conversations";
@@ -52,7 +52,8 @@ export async function handleInboundMessage(
   const visible =
     parsed.showOptions &&
     business.projectOptions.length &&
-    !visitorNamedProject([text, ...history.filter((m) => m.role === "user").map((m) => m.content)], business.projectOptions)
+    !visitorNamedProject([text, ...history.filter((m) => m.role === "user").map((m) => m.content)], business.projectOptions) &&
+    !projectsAlreadyOffered(history)
       ? `${parsed.visible}\n\n${business.projectOptions.join("\n")}`
       : parsed.visible;
 
