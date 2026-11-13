@@ -35,10 +35,16 @@ export interface CapturedLead {
   preferredTime?: string;
 }
 
+// When the bot wants the visitor to pick from the business's projects, it ends its reply with this
+// tag; the widget swaps it for tick boxes (other channels get the options as a short text list).
+export const OPTIONS_MARKER = "[[OPTIONS]]";
+const OPTIONS_MARKER_RE = /\[\[OPTIONS[^\]]*\]\]/g;
+
 export interface ParsedBotReply {
   visible: string;
   needsHuman: boolean;
   lead: CapturedLead | null;
+  showOptions: boolean;
 }
 
 function cleanField(value: unknown, max = 200): string | undefined {
@@ -70,14 +76,20 @@ export function parseBotReply(full: string): ParsedBotReply {
       lead = null; // malformed JSON from the model — still strip the tag, just don't act on it
     }
   }
+  const showOptions = visible.search(OPTIONS_MARKER_RE) !== -1;
+  visible = visible.replace(OPTIONS_MARKER_RE, "");
+
   // A truncated tag (stream cut off mid-tag) must never leak to the customer either.
   const dangling = visible.indexOf(LEAD_MARKER_PREFIX);
   if (dangling !== -1) visible = visible.slice(0, dangling);
 
   const needsHuman = visible.includes(NEEDS_HUMAN_MARKER);
   if (needsHuman) visible = visible.replace(NEEDS_HUMAN_MARKER, "");
+  // Any other half-written "[[" tag at the very end is dropped rather than shown.
+  const strayTag = visible.lastIndexOf("[[");
+  if (strayTag !== -1 && !visible.slice(strayTag).includes("]]")) visible = visible.slice(0, strayTag);
 
-  return { visible: visible.replace(/\s+$/, ""), needsHuman, lead };
+  return { visible: visible.replace(/\s+$/, ""), needsHuman, lead, showOptions };
 }
 
 export interface ChatContext {
@@ -85,6 +97,19 @@ export interface ChatContext {
   visitorName?: string | null;
   contactPhone?: string | null;
   contactEmail?: string | null;
+  /** The business's projects/products, offered to the visitor as tick boxes. */
+  projectOptions?: string[];
+}
+
+function optionsBlock(options: string[] | undefined): string {
+  if (!options || !options.length) return "";
+  return `\n\nOur projects are: ${options.join(", ")}. When the visitor hasn't said which one they're
+interested in and it would help to know (for example they ask generally about homes, prices,
+availability or visits), ask in one short line which project interests them and end your reply
+with this exact tag on its own line: ${OPTIONS_MARKER}
+The visitor will see the projects as tick boxes, so don't list them yourself. Use the tag at most
+once in a conversation unless they ask to see the options again, and never once they've named a
+project.`;
 }
 
 function visitorBlock(name: string | null | undefined): string {
@@ -122,14 +147,13 @@ ${persona ?? defaultTone(businessName)}
 
 ${visitorBlock(context.visitorName)}
 
-${scopeBlock(businessName, context)}
+${scopeBlock(businessName, context)}${optionsBlock(context.projectOptions)}
 
-Keep every reply short — like a real chat message, not an email or a brochure. Default to 1-3
-short sentences. Answer only what was actually asked; don't pile on every related detail you know
-just because it's in the notes. Never use bullet points, numbered lists, or headers — write in
-plain sentences the way you'd actually talk to someone. If there's genuinely a lot the visitor
-needs (e.g. they ask you to list everything about a project), give the short version and offer to
-share more if they want it, rather than dumping it all at once.
+Keep every reply very short, like a quick chat message from a real person. Aim for one or two
+short sentences and stay under 40 words. Answer only the exact thing asked, never add extra
+details, background or selling points they didn't ask for, and don't repeat what they said back
+to them. If more detail would genuinely help, give the short answer and offer to share more.
+Never use bullet points, numbered lists, or headers.
 
 You have some reference notes below about the business, drawn from its own website/documents. Use them to answer naturally — but never mention "context," "the provided information," "documents," "sources," or that you're an AI retrieving anything. The visitor should never see any of that — you just know this because you work here. If the notes don't cover something, say so plainly and naturally ("I don't have that on hand" / "I'm not sure about that one"), not in a way that references how you're generating the answer.
 
@@ -165,7 +189,7 @@ them": when the visitor first tells you their name, send the tag with just the n
 them properly. Send the tag again only when something changes: they ask about a different project, or give a
 new or corrected phone number or email. Then send it with all their current details. Never mention the tag, never put anything after it, and never ask for details
 just to fill the tag — only when it's natural (they want pricing, a call, a visit, or a follow up).
-If both tags apply in the same reply, put ${NEEDS_HUMAN_MARKER} last.
+If more than one tag applies in the same reply, put ${NEEDS_HUMAN_MARKER} last.
 
 <reference-notes>
 ${notesBlock}

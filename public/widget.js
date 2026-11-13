@@ -5,6 +5,8 @@
   var API_BASE = CHAT_API_URL.replace(/\/api\/chat\/?$/, "");
   var HANDOFF_URL = API_BASE + "/api/chat/handoff";
   var NAME_URL = API_BASE + "/api/chat/name";
+  var CONFIG_URL = API_BASE + "/api/chat/config";
+  var OPTIONS_SEPARATOR = "\u001e"; // the server puts this before the project list in a reply
   var GREETING_DELAY_MS = 45000;
 
   if (!SITE_KEY) {
@@ -50,6 +52,11 @@
     ".wcb-typing span{width:6px;height:6px;border-radius:50%;background:#999;animation:wcb-bounce 1.1s infinite ease-in-out}" +
     ".wcb-typing span:nth-child(2){animation-delay:0.15s}" +
     ".wcb-typing span:nth-child(3){animation-delay:0.3s}" +
+    ".wcb-options{margin:2px 0 12px;padding:10px;border:1px solid #e5e5e5;border-radius:10px;background:#fafafa}" +
+    ".wcb-options label{display:flex;align-items:center;gap:8px;padding:6px 2px;font-size:13px;color:#222;cursor:pointer}" +
+    ".wcb-options input{width:16px;height:16px;margin:0;accent-color:#111;cursor:pointer}" +
+    ".wcb-options button{margin-top:6px;width:100%;border:none;background:#111;color:#fff;border-radius:6px;padding:8px;font-size:13px;cursor:pointer}" +
+    ".wcb-options button:disabled{opacity:.4;cursor:default}" +
     "@keyframes wcb-bounce{0%,60%,100%{transform:translateY(0);opacity:.5}30%{transform:translateY(-4px);opacity:1}}";
   document.head.appendChild(style);
 
@@ -90,6 +97,53 @@
   var pendingQuestions = [];
   function knownName() {
     return localStorage.getItem(NAME_KEY);
+  }
+
+  // The business's projects, shown as tick boxes so visitors don't have to type them.
+  var projectOptions = [];
+  fetch(CONFIG_URL + "?siteKey=" + encodeURIComponent(SITE_KEY))
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (cfg) {
+      if (cfg && Array.isArray(cfg.projectOptions)) projectOptions = cfg.projectOptions;
+    })
+    .catch(function () {});
+
+  function joinChoices(list) {
+    if (list.length === 1) return list[0];
+    return list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
+  }
+
+  function showOptions(options) {
+    if (!options || !options.length) return;
+    messagesEl.querySelectorAll(".wcb-options").forEach(function (el) { el.remove(); });
+    var box = document.createElement("div");
+    box.className = "wcb-options";
+    options.forEach(function (opt) {
+      var label = document.createElement("label");
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = opt;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(opt));
+      box.appendChild(label);
+    });
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "Continue";
+    btn.disabled = true;
+    box.appendChild(btn);
+    box.addEventListener("change", function () {
+      btn.disabled = !box.querySelector("input:checked");
+    });
+    btn.addEventListener("click", function () {
+      var picked = Array.prototype.map.call(box.querySelectorAll("input:checked"), function (cb) { return cb.value; });
+      if (!picked.length) return;
+      box.remove();
+      userInteracted = true;
+      sendText("I'm interested in " + joinChoices(picked) + ".", false);
+    });
+    messagesEl.appendChild(box);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
   function addMessage(role, text) {
@@ -231,7 +285,12 @@
             addMessage("bot", "Thank you, " + name + ".");
             sendText(held, true);
           } else {
-            addMessage("bot", "Nice to meet you, " + name + ". What can I help you with today?");
+            if (projectOptions.length) {
+              addMessage("bot", "Nice to meet you, " + name + ". Which of our projects are you interested in?");
+              showOptions(projectOptions);
+            } else {
+              addMessage("bot", "Nice to meet you, " + name + ". What can I help you with today?");
+            }
           }
         });
     }
@@ -306,9 +365,22 @@
     botDiv.innerHTML = '<span class="wcb-typing"><span></span><span></span><span></span></span>';
     var revealer = createRevealer(botDiv);
     var firstChunk = true;
+    var optionsMode = false;
+    var optionsRaw = "";
 
     function pushChunk(str) {
       if (!str) return;
+      if (optionsMode) {
+        optionsRaw += str;
+        return;
+      }
+      var sep = str.indexOf(OPTIONS_SEPARATOR);
+      if (sep !== -1) {
+        optionsMode = true;
+        optionsRaw = str.slice(sep + 1);
+        str = str.slice(0, sep);
+        if (!str) return;
+      }
       if (firstChunk) {
         firstChunk = false;
         botDiv.textContent = ""; // clear the typing indicator the moment real content starts
@@ -340,6 +412,13 @@
     }
 
     history.push({ role: "assistant", content: revealer.text() });
+    if (optionsRaw) {
+      try {
+        showOptions(JSON.parse(optionsRaw).options);
+      } catch (e) {
+        // ignore a malformed options payload; the reply text already asked the question
+      }
+    }
   }
 
   sendEl.addEventListener("click", send);

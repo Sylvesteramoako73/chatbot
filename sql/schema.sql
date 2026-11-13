@@ -34,6 +34,8 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS client_confirmation_enabled BOOL
 -- Where the bot sends visitors whose questions aren't about this business ("call us on ... or email ...").
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS contact_phone TEXT;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS contact_email TEXT;
+-- Projects/products the widget offers as tick boxes, one per line.
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS project_options TEXT;
 
 CREATE TABLE IF NOT EXISTS team_members (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
