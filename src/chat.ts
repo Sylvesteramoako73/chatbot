@@ -3,6 +3,40 @@ import { retrieveContext } from "./retrieve";
 const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 const TOP_K = 5;
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+// Free Groq plans have small per-model rate limits, and each model has its own quota. When the main
+// model is rate limited (429), the request is too big for its per-minute token quota (413), or Groq
+// errors (5xx), the next model in this list answers instead, so visitors don't get an error.
+const FALLBACK_MODELS = (process.env.GROQ_FALLBACK_MODELS ?? "openai/gpt-oss-20b,llama-3.3-70b-versatile,llama-3.1-8b-instant")
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
+
+async function groqStreamRequest(apiKey: string, messages: { role: string; content: string }[]): Promise<Response> {
+  const models = [MODEL, ...FALLBACK_MODELS.filter((m) => m !== MODEL)];
+  let lastError = "";
+  for (const model of models) {
+    const payload: Record<string, unknown> = { model, stream: true, messages };
+    // gpt-oss models think before answering; low effort keeps replies fast and uses fewer tokens.
+    if (model.startsWith("openai/gpt-oss")) payload.reasoning_effort = "low";
+    let res: Response;
+    try {
+      res = await fetch(GROQ_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      lastError = `${model}: ${(err as Error).message}`;
+      continue;
+    }
+    if (res.ok && res.body) return res;
+    const text = await res.text().catch(() => "");
+    lastError = `${model}: ${res.status} ${text.slice(0, 200)}`;
+    if (res.status !== 429 && res.status !== 413 && res.status < 500) break;
+    console.warn(`Groq ${model} unavailable (${res.status}), trying next model`);
+  }
+  throw new Error(`Groq request failed: ${lastError}`);
+}
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -258,35 +292,19 @@ export async function* streamChatResponse(
     throw new Error("GROQ_API_KEY is not set — copy .env.example to .env and fill it in.");
   }
 
-  const response = await fetch(GROQ_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+  const response = await groqStreamRequest(apiKey, [
+    {
+      role: "system",
+      content: buildSystemPrompt(businessName, persona, notesBlock, {
+        ...context,
+        alreadyAskedForContact: botAlreadyAskedForContact(history),
+      }),
     },
-    body: JSON.stringify({
-      model: MODEL,
-      stream: true,
-      messages: [
-        {
-          role: "system",
-          content: buildSystemPrompt(businessName, persona, notesBlock, {
-            ...context,
-            alreadyAskedForContact: botAlreadyAskedForContact(history),
-          }),
-        },
-        ...history.map((m) => ({ role: m.role, content: m.content })),
-        { role: "user", content: userMessage },
-      ],
-    }),
-  });
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: userMessage },
+  ]);
 
-  if (!response.ok || !response.body) {
-    const errText = response.body ? await response.text() : "no response body";
-    throw new Error(`Groq request failed: ${response.status} ${errText}`);
-  }
-
-  const reader = response.body.getReader();
+  const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
 
