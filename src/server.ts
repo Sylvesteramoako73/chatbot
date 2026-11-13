@@ -186,7 +186,9 @@ app.post("/api/chat", async (req: Request, res: Response) => {
     await runBotReplyForWidget(conversation, business, message, Array.isArray(history) ? history : [], res);
   } catch (err) {
     console.error("Chat error:", err);
-    if (!res.headersSent) res.status(500).json({ error: "Internal error" });
+    // The widget shows the response body as the bot's reply, so send something a visitor can read.
+    const busy = "Sorry, I'm getting a lot of messages right now. Please try again in a minute.";
+    if (!res.headersSent) res.status(503).type("text/plain").send(busy);
     else res.end();
   }
 });
